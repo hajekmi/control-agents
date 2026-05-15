@@ -1,0 +1,153 @@
+:root {
+  color-scheme: dark;
+  --background: #151617;
+  --panel: #202326;
+  --border: #353a40;
+  --text: #eef0f2;
+  --muted: #a7afb8;
+  --accent: #4db6ac;
+  --danger: #ff7b72;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--background);
+  color: var(--text);
+  font: 14px/1.4 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+  min-height: 36px;
+  padding: 0 12px;
+}
+
+button:hover,
+button.active {
+  border-color: var(--accent);
+}
+
+button.active {
+  background: #243b3a;
+}
+
+button.secondary {
+  color: var(--muted);
+}
+
+.topbar {
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  height: 68px;
+  justify-content: space-between;
+  padding: 0 16px;
+}
+
+.topbar h1,
+.login-panel h1 {
+  font-size: 18px;
+  font-weight: 650;
+  margin: 0;
+}
+
+.topbar p {
+  color: var(--muted);
+  margin: 2px 0 0;
+}
+
+.workspace {
+  display: grid;
+  grid-template-rows: 44px minmax(0, 1fr);
+  height: calc(100% - 68px);
+}
+
+.tabs {
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 6px 10px;
+}
+
+.tabs button {
+  flex: 0 0 auto;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-pane {
+  min-height: 0;
+  position: relative;
+}
+
+.terminal-frame {
+  border: 0;
+  height: 100%;
+  inset: 0;
+  position: absolute;
+  width: 100%;
+}
+
+.empty-state {
+  color: var(--muted);
+  display: grid;
+  height: 100%;
+  place-items: center;
+}
+
+.login-page {
+  display: grid;
+  place-items: center;
+}
+
+.login-panel {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  width: min(360px, calc(100vw - 32px));
+  padding: 24px;
+}
+
+.login-panel form {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.login-panel input {
+  background: #111315;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  min-height: 40px;
+  padding: 0 10px;
+}
+
+.login-panel p {
+  color: var(--danger);
+  margin: 12px 0 0;
+}
+

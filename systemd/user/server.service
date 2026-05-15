@@ -1,0 +1,16 @@
+[Unit]
+Description=Terminal Mirror
+After=network.target
+
+[Service]
+Type=simple
+Environment=MIRROR_BIND_ADDR=0.0.0.0
+Environment=MIRROR_PORT=8080
+Environment=MIRROR_STATE_DIR=%h/.local/state/terminal-mirror
+EnvironmentFile=%h/.config/terminal-mirror/env
+ExecStart=%h/.local/bin/server
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

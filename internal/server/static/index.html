@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Terminal Mirror</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>Terminal Mirror</h1>
+        <p id="status">Loading sessions...</p>
+      </div>
+      <form method="post" action="/logout">
+        <button type="submit" class="secondary">Sign out</button>
+      </form>
+    </header>
+    <main class="workspace">
+      <nav id="tabs" class="tabs" aria-label="Terminal sessions"></nav>
+      <section id="terminal-pane" class="terminal-pane">
+        <div id="empty-state" class="empty-state">No mirrored terminals are registered.</div>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>
+
