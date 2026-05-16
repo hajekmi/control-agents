@@ -26,8 +26,8 @@ documentation. Keep this file focused on working rules for future agents.
 - The right-side web scrollbar is owned by the parent app, not by ttyd. It
   calls server tmux-scroll APIs and should keep working even when iframe wheel
   events are unreliable on mobile browsers. It must account for both tmux pane
-  history and tmux client window offset when `window-size largest` makes the
-  tmux window larger than a small browser viewport. When status is enabled,
+  history and tmux client window offset when a non-default window-size mode
+  makes the tmux window larger than a browser viewport. When status is enabled,
   subtract the tmux status line from client height before calculating bottom
   offsets, otherwise the prompt can end up hidden behind the status line.
 - The parent app also captures vertical wheel events over the same-origin ttyd
@@ -37,8 +37,9 @@ documentation. Keep this file focused on working rules for future agents.
   sockets in the shared state directory.
 - Only wrapper-started sessions should appear in the UI unless the user changes
   that requirement.
-- Preserve the default tmux `window-size largest` behavior unless changing it is
-  the purpose of the task.
+- Preserve the default tmux `window-size smallest` behavior unless changing it
+  is the purpose of the task. It keeps fullscreen terminal apps visible in both
+  browser and SSH clients attached to the same tmux session.
 - Preserve the default tmux `mouse off` behavior unless changing it is the
   purpose of the task. It keeps normal terminal text selection from being
   intercepted by tmux; users can set `MIRROR_TMUX_MOUSE=on` only when they

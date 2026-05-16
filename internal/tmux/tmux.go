@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -25,7 +26,8 @@ func (ExecRunner) Run(ctx context.Context, name string, args ...string) error {
 }
 
 type Client struct {
-	runner CommandRunner
+	runner            CommandRunner
+	processDescendant func(pid, ancestor int) bool
 }
 
 type ScrollState struct {
@@ -85,10 +87,21 @@ func NewClient() *Client {
 }
 
 func NewClientWithRunner(runner CommandRunner) *Client {
-	return &Client{runner: runner}
+	return &Client{
+		runner:            runner,
+		processDescendant: processDescendsFrom,
+	}
 }
 
 func (c *Client) Status(ctx context.Context, target string) (ScrollState, error) {
+	return c.status(ctx, target, 0)
+}
+
+func (c *Client) StatusForProcess(ctx context.Context, target string, processPID int) (ScrollState, error) {
+	return c.status(ctx, target, processPID)
+}
+
+func (c *Client) status(ctx context.Context, target string, processPID int) (ScrollState, error) {
 	output, err := c.runner.Output(ctx, "tmux", "display-message", "-p", "-t", target, "#{pane_in_mode}|#{scroll_position}|#{history_size}|#{pane_height}")
 	if err != nil {
 		return ScrollState{}, err
@@ -97,14 +110,22 @@ func (c *Client) Status(ctx context.Context, target string) (ScrollState, error)
 	if err != nil {
 		return ScrollState{}, err
 	}
-	if view, err := c.scrollClient(ctx, target); err == nil {
+	if view, err := c.scrollClient(ctx, target, processPID); err == nil {
 		state.applyClientView(view)
 	}
 	return state, nil
 }
 
 func (c *Client) Scroll(ctx context.Context, target string, request ScrollRequest) (ScrollState, error) {
-	state, err := c.Status(ctx, target)
+	return c.scroll(ctx, target, request, 0)
+}
+
+func (c *Client) ScrollForProcess(ctx context.Context, target string, processPID int, request ScrollRequest) (ScrollState, error) {
+	return c.scroll(ctx, target, request, processPID)
+}
+
+func (c *Client) scroll(ctx context.Context, target string, request ScrollRequest, processPID int) (ScrollState, error) {
+	state, err := c.status(ctx, target, processPID)
 	if err != nil {
 		return ScrollState{}, err
 	}
@@ -116,7 +137,7 @@ func (c *Client) Scroll(ctx context.Context, target string, request ScrollReques
 			return ScrollState{}, err
 		}
 	case "line-down":
-		if err := c.lineDown(ctx, target, state, amount); err != nil {
+		if err := c.lineDown(ctx, target, state, amount, processPID); err != nil {
 			return ScrollState{}, err
 		}
 	case "page-up":
@@ -124,7 +145,7 @@ func (c *Client) Scroll(ctx context.Context, target string, request ScrollReques
 			return ScrollState{}, err
 		}
 	case "page-down":
-		if err := c.pageDown(ctx, target, state, amount); err != nil {
+		if err := c.pageDown(ctx, target, state, amount, processPID); err != nil {
 			return ScrollState{}, err
 		}
 	case "top":
@@ -132,18 +153,18 @@ func (c *Client) Scroll(ctx context.Context, target string, request ScrollReques
 			return ScrollState{}, err
 		}
 	case "bottom":
-		if err := c.bottom(ctx, target, state); err != nil {
+		if err := c.bottom(ctx, target, state, processPID); err != nil {
 			return ScrollState{}, err
 		}
 	case "set":
-		if err := c.setScrollTop(ctx, target, state, request.Value); err != nil {
+		if err := c.setScrollTop(ctx, target, state, request.Value, processPID); err != nil {
 			return ScrollState{}, err
 		}
 	default:
 		return ScrollState{}, fmt.Errorf("unsupported scroll action %q", request.Action)
 	}
 
-	return c.Status(ctx, target)
+	return c.status(ctx, target, processPID)
 }
 
 func (c *Client) SendKey(ctx context.Context, target string, request KeyRequest) error {
@@ -168,7 +189,7 @@ func (c *Client) copyMode(ctx context.Context, target string) error {
 	return c.runner.Run(ctx, "tmux", "copy-mode", "-t", target)
 }
 
-func (c *Client) bottom(ctx context.Context, target string, state ScrollState) error {
+func (c *Client) bottom(ctx context.Context, target string, state ScrollState, processPID int) error {
 	if err := c.copyMode(ctx, target); err != nil {
 		return err
 	}
@@ -179,7 +200,7 @@ func (c *Client) bottom(ctx context.Context, target string, state ScrollState) e
 		return err
 	}
 	if state.hasClientOverflow() {
-		next, err := c.Status(ctx, target)
+		next, err := c.status(ctx, target, processPID)
 		if err != nil {
 			return err
 		}
@@ -188,7 +209,7 @@ func (c *Client) bottom(ctx context.Context, target string, state ScrollState) e
 	return nil
 }
 
-func (c *Client) setScrollTop(ctx context.Context, target string, state ScrollState, value int) error {
+func (c *Client) setScrollTop(ctx context.Context, target string, state ScrollState, value int, processPID int) error {
 	if value < 0 {
 		value = 0
 	}
@@ -197,10 +218,10 @@ func (c *Client) setScrollTop(ctx context.Context, target string, state ScrollSt
 	}
 	if value >= state.HistorySize {
 		if state.InCopyMode || state.Position > 0 {
-			if err := c.bottom(ctx, target, state); err != nil {
+			if err := c.bottom(ctx, target, state, processPID); err != nil {
 				return err
 			}
-			next, err := c.Status(ctx, target)
+			next, err := c.status(ctx, target, processPID)
 			if err != nil {
 				return err
 			}
@@ -243,12 +264,12 @@ func (c *Client) lineUp(ctx context.Context, target string, state ScrollState, a
 	return c.sendCopyCommand(ctx, target, amount, "scroll-up")
 }
 
-func (c *Client) lineDown(ctx context.Context, target string, state ScrollState, amount int) error {
+func (c *Client) lineDown(ctx context.Context, target string, state ScrollState, amount int, processPID int) error {
 	if state.InCopyMode || state.Position > 0 {
 		if err := c.sendCopyCommand(ctx, target, amount, "scroll-down"); err != nil {
 			return err
 		}
-		return c.cancelCopyModeAtLiveBottom(ctx, target)
+		return c.cancelCopyModeAtLiveBottom(ctx, target, processPID)
 	}
 	return c.adjustClientOffset(ctx, state, "down", min(amount, state.WindowOverflow-state.WindowOffsetY))
 }
@@ -269,12 +290,12 @@ func (c *Client) pageUp(ctx context.Context, target string, state ScrollState, a
 	return c.sendCopyCommand(ctx, target, amount, "page-up")
 }
 
-func (c *Client) pageDown(ctx context.Context, target string, state ScrollState, amount int) error {
+func (c *Client) pageDown(ctx context.Context, target string, state ScrollState, amount int, processPID int) error {
 	if state.InCopyMode || state.Position > 0 {
 		if err := c.sendCopyCommand(ctx, target, amount, "page-down"); err != nil {
 			return err
 		}
-		return c.cancelCopyModeAtLiveBottom(ctx, target)
+		return c.cancelCopyModeAtLiveBottom(ctx, target, processPID)
 	}
 	return c.adjustClientOffset(ctx, state, "down", min(amount*state.pageRows(), state.WindowOverflow-state.WindowOffsetY))
 }
@@ -330,8 +351,8 @@ func (c *Client) adjustClientOffset(ctx context.Context, state ScrollState, dire
 	return c.runner.Run(ctx, "tmux", "refresh-client", "-t", state.clientName, flag, strconv.Itoa(amount))
 }
 
-func (c *Client) cancelCopyModeAtLiveBottom(ctx context.Context, target string) error {
-	state, err := c.Status(ctx, target)
+func (c *Client) cancelCopyModeAtLiveBottom(ctx context.Context, target string, processPID int) error {
+	state, err := c.status(ctx, target, processPID)
 	if err != nil {
 		return err
 	}
@@ -342,7 +363,7 @@ func (c *Client) cancelCopyModeAtLiveBottom(ctx context.Context, target string) 
 		return err
 	}
 	if state.hasClientOverflow() {
-		next, err := c.Status(ctx, target)
+		next, err := c.status(ctx, target, processPID)
 		if err != nil {
 			return err
 		}
@@ -398,18 +419,20 @@ func parseScrollState(output string) (ScrollState, error) {
 
 type clientView struct {
 	name         string
+	pid          int
 	height       int
 	windowHeight int
 	offsetY      int
 	statusOn     bool
 }
 
-func (c *Client) scrollClient(ctx context.Context, target string) (clientView, error) {
-	output, err := c.runner.Output(ctx, "tmux", "list-clients", "-t", target, "-F", "#{client_name}|#{client_height}|#{window_height}|#{window_offset_y}|#{status}")
+func (c *Client) scrollClient(ctx context.Context, target string, processPID int) (clientView, error) {
+	output, err := c.runner.Output(ctx, "tmux", "list-clients", "-t", target, "-F", "#{client_name}|#{client_pid}|#{client_height}|#{window_height}|#{window_offset_y}|#{status}")
 	if err != nil {
 		return clientView{}, err
 	}
 	var best clientView
+	var preferred clientView
 	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
 		if strings.TrimSpace(line) == "" {
 			continue
@@ -421,9 +444,18 @@ func (c *Client) scrollClient(ctx context.Context, target string) (clientView, e
 		if view.name == "" || view.height <= 0 || view.windowHeight <= 0 {
 			continue
 		}
+		if processPID > 0 && c.belongsToProcess(view.pid, processPID) {
+			if preferred.name == "" || view.height < preferred.height {
+				preferred = view
+			}
+			continue
+		}
 		if best.name == "" || view.height < best.height {
 			best = view
 		}
+	}
+	if preferred.name != "" {
+		return preferred, nil
 	}
 	if best.name == "" {
 		return clientView{}, errors.New("no tmux clients")
@@ -431,22 +463,42 @@ func (c *Client) scrollClient(ctx context.Context, target string) (clientView, e
 	return best, nil
 }
 
+func (c *Client) belongsToProcess(pid, ancestor int) bool {
+	if pid <= 0 || ancestor <= 0 {
+		return false
+	}
+	if pid == ancestor {
+		return true
+	}
+	if c.processDescendant == nil {
+		return false
+	}
+	return c.processDescendant(pid, ancestor)
+}
+
 func parseClientView(line string) (clientView, error) {
 	parts := strings.Split(strings.TrimSpace(line), "|")
-	if len(parts) != 5 {
+	if len(parts) != 6 {
 		return clientView{}, errors.New("unexpected tmux client format")
 	}
-	height, err := parseOptionalInt(parts[1])
+	pid, err := parseOptionalInt(parts[1])
+	if err != nil {
+		return clientView{}, fmt.Errorf("parse client pid: %w", err)
+	}
+	height, err := parseOptionalInt(parts[2])
 	if err != nil {
 		return clientView{}, fmt.Errorf("parse client height: %w", err)
 	}
-	windowHeight, err := parseOptionalInt(parts[2])
+	windowHeight, err := parseOptionalInt(parts[3])
 	if err != nil {
 		return clientView{}, fmt.Errorf("parse window height: %w", err)
 	}
-	offsetY, err := parseOptionalInt(parts[3])
+	offsetY, err := parseOptionalInt(parts[4])
 	if err != nil {
 		return clientView{}, fmt.Errorf("parse window offset: %w", err)
+	}
+	if pid < 0 {
+		pid = 0
 	}
 	if height < 0 {
 		height = 0
@@ -459,10 +511,11 @@ func parseClientView(line string) (clientView, error) {
 	}
 	return clientView{
 		name:         parts[0],
+		pid:          pid,
 		height:       height,
 		windowHeight: windowHeight,
 		offsetY:      offsetY,
-		statusOn:     strings.EqualFold(parts[4], "on") || parts[4] == "1",
+		statusOn:     strings.EqualFold(parts[5], "on") || parts[5] == "1",
 	}, nil
 }
 
@@ -534,4 +587,48 @@ func parseOptionalInt(value string) (int, error) {
 		return 0, nil
 	}
 	return strconv.Atoi(value)
+}
+
+func processDescendsFrom(pid, ancestor int) bool {
+	seen := make(map[int]bool)
+	for pid > 1 && !seen[pid] {
+		if pid == ancestor {
+			return true
+		}
+		seen[pid] = true
+		parent, err := parentPID(pid)
+		if err != nil || parent <= 0 || parent == pid {
+			return false
+		}
+		pid = parent
+	}
+	return false
+}
+
+func parentPID(pid int) (int, error) {
+	if parent, err := parentPIDFromProc(pid); err == nil {
+		return parent, nil
+	}
+	output, err := exec.Command("ps", "-o", "ppid=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		return 0, err
+	}
+	return strconv.Atoi(strings.TrimSpace(string(output)))
+}
+
+func parentPIDFromProc(pid int) (int, error) {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return 0, err
+	}
+	text := string(data)
+	end := strings.LastIndex(text, ")")
+	if end < 0 || end+2 >= len(text) {
+		return 0, errors.New("unexpected proc stat format")
+	}
+	fields := strings.Fields(text[end+1:])
+	if len(fields) < 2 {
+		return 0, errors.New("unexpected proc stat fields")
+	}
+	return strconv.Atoi(fields[1])
 }

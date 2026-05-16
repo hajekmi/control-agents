@@ -197,7 +197,7 @@ func (s *Server) handleSessionAPI(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleScrollAPI(w http.ResponseWriter, r *http.Request, id string, session registry.Session) {
 	switch r.Method {
 	case http.MethodGet:
-		state, err := s.tmux.Status(r.Context(), session.TmuxName)
+		state, err := s.tmux.StatusForProcess(r.Context(), session.TmuxName, session.PID)
 		if err != nil {
 			s.logger.Error("tmux scroll status failed", "session", id, "error", err)
 			http.Error(w, "failed to read scroll state", http.StatusBadGateway)
@@ -210,7 +210,7 @@ func (s *Server) handleScrollAPI(w http.ResponseWriter, r *http.Request, id stri
 			http.Error(w, "invalid scroll request", http.StatusBadRequest)
 			return
 		}
-		state, err := s.tmux.Scroll(r.Context(), session.TmuxName, request)
+		state, err := s.tmux.ScrollForProcess(r.Context(), session.TmuxName, session.PID, request)
 		if err != nil {
 			s.logger.Error("tmux scroll command failed", "session", id, "action", request.Action, "error", err)
 			http.Error(w, "failed to scroll terminal", http.StatusBadGateway)

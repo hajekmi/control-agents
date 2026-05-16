@@ -72,7 +72,7 @@ func TestScrollBottomCancelsCopyMode(t *testing.T) {
 func TestStatusIncludesClientWindowOverflow(t *testing.T) {
 	runner := &fakeRunner{
 		status:  "0||20|95\n",
-		clients: "/dev/pts/ssh|90|95|5|off\n/dev/pts/mobile|24|95|71|off\n",
+		clients: "/dev/pts/ssh|101|90|95|5|off\n/dev/pts/mobile|102|24|95|71|off\n",
 	}
 	client := NewClientWithRunner(runner)
 
@@ -92,10 +92,72 @@ func TestStatusIncludesClientWindowOverflow(t *testing.T) {
 	}
 }
 
+func TestStatusForProcessPrefersMatchingClientOverSmallestClient(t *testing.T) {
+	runner := &fakeRunner{
+		status:  "0||20|95\n",
+		clients: "/dev/pts/ssh|101|24|95|71|off\n/dev/pts/web|202|90|95|5|off\n",
+	}
+	client := NewClientWithRunner(runner)
+	client.processDescendant = func(pid, ancestor int) bool {
+		return pid == 202 && ancestor == 200
+	}
+
+	state, err := client.StatusForProcess(context.Background(), "main", 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if state.PaneHeight != 90 {
+		t.Fatalf("pane height = %d, want matching web client height 90", state.PaneHeight)
+	}
+	if state.WindowOverflow != 5 || state.WindowOffsetY != 5 {
+		t.Fatalf("window overflow/offset = %d/%d, want matching web client 5/5", state.WindowOverflow, state.WindowOffsetY)
+	}
+	if state.ScrollTop != 25 || state.ScrollMax != 25 {
+		t.Fatalf("scroll top/max = %d/%d, want 25/25", state.ScrollTop, state.ScrollMax)
+	}
+}
+
+func TestScrollForProcessBottomPansMatchingClientAfterCopyMode(t *testing.T) {
+	runner := &fakeRunner{
+		statuses: []string{
+			"1|10|20|95\n",
+			"0||20|95\n",
+			"0||20|95\n",
+		},
+		clients: "/dev/pts/ssh|101|24|95|71|off\n/dev/pts/web|202|90|95|0|off\n",
+	}
+	client := NewClientWithRunner(runner)
+	client.processDescendant = func(pid, ancestor int) bool {
+		return pid == 202 && ancestor == 200
+	}
+
+	_, err := client.ScrollForProcess(context.Background(), "main", 200, ScrollRequest{Action: "bottom"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := [][]string{
+		{"output", "tmux", "display-message", "-p", "-t", "main", "#{pane_in_mode}|#{scroll_position}|#{history_size}|#{pane_height}"},
+		{"output", "tmux", "list-clients", "-t", "main", "-F", "#{client_name}|#{client_pid}|#{client_height}|#{window_height}|#{window_offset_y}|#{status}"},
+		{"run", "tmux", "copy-mode", "-t", "main"},
+		{"run", "tmux", "send-keys", "-t", "main", "-X", "history-bottom"},
+		{"run", "tmux", "send-keys", "-t", "main", "-X", "cancel"},
+		{"output", "tmux", "display-message", "-p", "-t", "main", "#{pane_in_mode}|#{scroll_position}|#{history_size}|#{pane_height}"},
+		{"output", "tmux", "list-clients", "-t", "main", "-F", "#{client_name}|#{client_pid}|#{client_height}|#{window_height}|#{window_offset_y}|#{status}"},
+		{"run", "tmux", "refresh-client", "-t", "/dev/pts/web", "-D", "5"},
+		{"output", "tmux", "display-message", "-p", "-t", "main", "#{pane_in_mode}|#{scroll_position}|#{history_size}|#{pane_height}"},
+		{"output", "tmux", "list-clients", "-t", "main", "-F", "#{client_name}|#{client_pid}|#{client_height}|#{window_height}|#{window_offset_y}|#{status}"},
+	}
+	if !reflect.DeepEqual(runner.calls, want) {
+		t.Fatalf("calls = %#v, want %#v", runner.calls, want)
+	}
+}
+
 func TestStatusLineReducesVisibleClientHeight(t *testing.T) {
 	runner := &fakeRunner{
 		status:  "0||20|95\n",
-		clients: "/dev/pts/mobile|40|95|56|on\n",
+		clients: "/dev/pts/mobile|102|40|95|56|on\n",
 	}
 	client := NewClientWithRunner(runner)
 
@@ -118,7 +180,7 @@ func TestStatusLineReducesVisibleClientHeight(t *testing.T) {
 func TestLineUpPansClientWindowBeforeHistory(t *testing.T) {
 	runner := &fakeRunner{
 		status:  "0||20|95\n",
-		clients: "/dev/pts/mobile|24|95|10|off\n",
+		clients: "/dev/pts/mobile|102|24|95|10|off\n",
 	}
 	client := NewClientWithRunner(runner)
 
@@ -129,10 +191,10 @@ func TestLineUpPansClientWindowBeforeHistory(t *testing.T) {
 
 	want := [][]string{
 		{"output", "tmux", "display-message", "-p", "-t", "main", "#{pane_in_mode}|#{scroll_position}|#{history_size}|#{pane_height}"},
-		{"output", "tmux", "list-clients", "-t", "main", "-F", "#{client_name}|#{client_height}|#{window_height}|#{window_offset_y}|#{status}"},
+		{"output", "tmux", "list-clients", "-t", "main", "-F", "#{client_name}|#{client_pid}|#{client_height}|#{window_height}|#{window_offset_y}|#{status}"},
 		{"run", "tmux", "refresh-client", "-t", "/dev/pts/mobile", "-U", "3"},
 		{"output", "tmux", "display-message", "-p", "-t", "main", "#{pane_in_mode}|#{scroll_position}|#{history_size}|#{pane_height}"},
-		{"output", "tmux", "list-clients", "-t", "main", "-F", "#{client_name}|#{client_height}|#{window_height}|#{window_offset_y}|#{status}"},
+		{"output", "tmux", "list-clients", "-t", "main", "-F", "#{client_name}|#{client_pid}|#{client_height}|#{window_height}|#{window_offset_y}|#{status}"},
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("calls = %#v, want %#v", runner.calls, want)
@@ -142,7 +204,7 @@ func TestLineUpPansClientWindowBeforeHistory(t *testing.T) {
 func TestScrollSetCanPanWithinLiveWindow(t *testing.T) {
 	runner := &fakeRunner{
 		status:  "0||20|95\n",
-		clients: "/dev/pts/mobile|24|95|71|off\n",
+		clients: "/dev/pts/mobile|102|24|95|71|off\n",
 	}
 	client := NewClientWithRunner(runner)
 
@@ -153,10 +215,10 @@ func TestScrollSetCanPanWithinLiveWindow(t *testing.T) {
 
 	want := [][]string{
 		{"output", "tmux", "display-message", "-p", "-t", "main", "#{pane_in_mode}|#{scroll_position}|#{history_size}|#{pane_height}"},
-		{"output", "tmux", "list-clients", "-t", "main", "-F", "#{client_name}|#{client_height}|#{window_height}|#{window_offset_y}|#{status}"},
+		{"output", "tmux", "list-clients", "-t", "main", "-F", "#{client_name}|#{client_pid}|#{client_height}|#{window_height}|#{window_offset_y}|#{status}"},
 		{"run", "tmux", "refresh-client", "-t", "/dev/pts/mobile", "-U", "61"},
 		{"output", "tmux", "display-message", "-p", "-t", "main", "#{pane_in_mode}|#{scroll_position}|#{history_size}|#{pane_height}"},
-		{"output", "tmux", "list-clients", "-t", "main", "-F", "#{client_name}|#{client_height}|#{window_height}|#{window_offset_y}|#{status}"},
+		{"output", "tmux", "list-clients", "-t", "main", "-F", "#{client_name}|#{client_pid}|#{client_height}|#{window_height}|#{window_offset_y}|#{status}"},
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("calls = %#v, want %#v", runner.calls, want)
@@ -166,7 +228,7 @@ func TestScrollSetCanPanWithinLiveWindow(t *testing.T) {
 func TestScrollSetBottomAccountsForStatusLine(t *testing.T) {
 	runner := &fakeRunner{
 		status:  "0||20|95\n",
-		clients: "/dev/pts/mobile|40|95|55|on\n",
+		clients: "/dev/pts/mobile|102|40|95|55|on\n",
 	}
 	client := NewClientWithRunner(runner)
 
@@ -177,10 +239,10 @@ func TestScrollSetBottomAccountsForStatusLine(t *testing.T) {
 
 	want := [][]string{
 		{"output", "tmux", "display-message", "-p", "-t", "main", "#{pane_in_mode}|#{scroll_position}|#{history_size}|#{pane_height}"},
-		{"output", "tmux", "list-clients", "-t", "main", "-F", "#{client_name}|#{client_height}|#{window_height}|#{window_offset_y}|#{status}"},
+		{"output", "tmux", "list-clients", "-t", "main", "-F", "#{client_name}|#{client_pid}|#{client_height}|#{window_height}|#{window_offset_y}|#{status}"},
 		{"run", "tmux", "refresh-client", "-t", "/dev/pts/mobile", "-D", "1"},
 		{"output", "tmux", "display-message", "-p", "-t", "main", "#{pane_in_mode}|#{scroll_position}|#{history_size}|#{pane_height}"},
-		{"output", "tmux", "list-clients", "-t", "main", "-F", "#{client_name}|#{client_height}|#{window_height}|#{window_offset_y}|#{status}"},
+		{"output", "tmux", "list-clients", "-t", "main", "-F", "#{client_name}|#{client_pid}|#{client_height}|#{window_height}|#{window_offset_y}|#{status}"},
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("calls = %#v, want %#v", runner.calls, want)

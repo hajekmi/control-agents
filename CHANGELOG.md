@@ -4,6 +4,12 @@ Versions use calendar numbering: `YYYY.M.REVISION`.
 
 ## Unreleased
 
+## 2026.5.8 - 2026-05-16
+
+- Prefer the registered ttyd tmux client throughout web history scroll APIs, including copy-mode cleanup, so browser scrolling does not accidentally pan or repaint a smaller SSH tmux client.
+- Default managed tmux windows to `window-size smallest` so fullscreen terminal apps render the same complete screen in web and SSH clients.
+- Add Playwright coverage for mixed browser plus SSH-sized tmux clients to prevent fullscreen app top rows from being clipped.
+
 ## 2026.5.7 - 2026-05-16
 
 - Keep terminal text selection working with tmux mouse mode off while routing browser wheel scrolling through the tmux history scrollbar API.

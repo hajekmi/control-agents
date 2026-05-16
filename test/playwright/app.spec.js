@@ -156,6 +156,21 @@ test("terminal wheel and scrollbar controls route through tmux scroll API", asyn
   await expect.poll(async () => Number(await page.locator("#history-track").getAttribute("aria-valuenow"))).toBeLessThan(before.scrollTop);
 });
 
+test("keeps fullscreen tmux apps visible when an SSH-sized client is smaller than the browser", async ({ page }) => {
+  await login(page);
+  await waitForTerminalFrame(page);
+
+  expect(run("tmux", ["show-options", "-w", "-v", "-t", `${sessionName}:`, "window-size"]).trim()).toBe("smallest");
+
+  const controlClient = await attachControlClient(sessionName, "80,20");
+  try {
+    await expect.poll(() => tmuxWindowSize(sessionName).height).toBe(20);
+    await expect.poll(() => tmuxClientViews(sessionName).every((client) => client.offsetY === "" || client.offsetY === "0")).toBe(true);
+  } finally {
+    detachControlClient(controlClient);
+  }
+});
+
 async function login(page) {
   await page.goto(`${baseURL}/`);
   if (!/\/login/.test(page.url())) {
@@ -196,6 +211,76 @@ function run(name, args) {
     throw new Error(`${name} ${args.join(" ")} failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
   }
   return result.stdout;
+}
+
+async function attachControlClient(session, size) {
+  const control = spawn("tmux", ["-C", "attach-session", "-t", session], {
+    cwd: repoRoot,
+    env: process.env,
+    stdio: ["pipe", "pipe", "pipe"]
+  });
+  let logs = "";
+  control.stdout.on("data", (chunk) => {
+    logs += chunk.toString();
+  });
+  control.stderr.on("data", (chunk) => {
+    logs += chunk.toString();
+  });
+
+  const name = await waitForControlClient(session, 5_000, () => logs);
+  run("tmux", ["refresh-client", "-t", name, "-C", size]);
+  return { process: control, name };
+}
+
+function detachControlClient(controlClient) {
+  try {
+    if (controlClient.name) {
+      spawnSync("tmux", ["detach-client", "-t", controlClient.name], { stdio: "ignore" });
+    }
+  } finally {
+    if (controlClient.process && !controlClient.process.killed) {
+      controlClient.process.kill("SIGTERM");
+    }
+  }
+}
+
+async function waitForControlClient(session, timeoutMs, logs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const client = tmuxClientViews(session).find((view) => view.control);
+    if (client) return client.name;
+    await delay(100);
+  }
+  throw new Error(`control tmux client did not attach\n${logs()}`);
+}
+
+function tmuxClientViews(session) {
+  return run("tmux", [
+    "list-clients",
+    "-t",
+    session,
+    "-F",
+    "#{client_name}|#{client_control_mode}|#{client_width}|#{client_height}|#{window_width}|#{window_height}|#{window_offset_y}"
+  ]).trim().split("\n").filter(Boolean).map((line) => {
+    const [name, control, clientWidth, clientHeight, windowWidth, windowHeight, offsetY] = line.split("|");
+    return {
+      name,
+      control: control === "1",
+      clientWidth: Number.parseInt(clientWidth, 10),
+      clientHeight: Number.parseInt(clientHeight, 10),
+      windowWidth: Number.parseInt(windowWidth, 10),
+      windowHeight: Number.parseInt(windowHeight, 10),
+      offsetY
+    };
+  });
+}
+
+function tmuxWindowSize(session) {
+  const [width, height] = run("tmux", ["display-message", "-p", "-t", session, "#{window_width}|#{window_height}"]).trim().split("|");
+  return {
+    width: Number.parseInt(width, 10),
+    height: Number.parseInt(height, 10)
+  };
 }
 
 function killRegisteredTtyd() {

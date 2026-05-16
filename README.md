@@ -138,7 +138,7 @@ The wrapper reads:
 - `MIRROR_STATE_DIR`, same default as the service
 - `MIRROR_DISPLAY_NAME`, optional label for the browser tab
 - `MIRROR_APP_NAME`, optional override for tmux status-left; default is the session display name
-- `MIRROR_TMUX_WINDOW_SIZE`, default `largest`
+- `MIRROR_TMUX_WINDOW_SIZE`, default `smallest`
 - `MIRROR_TMUX_MOUSE`, default `off`
 - `MIRROR_WEB_SCROLLBACK_LINES`, default `10000`
 - `MIRROR_NO_ATTACH=1`, test/support mode that registers the session without attaching the current terminal
@@ -157,7 +157,7 @@ Keep `MIRROR_STATE_DIR` reasonably short. Unix domain socket paths have a small 
 
 Because the browser is attached to tmux, `control-agents` keeps `MIRROR_TMUX_MOUSE=off` by default so normal terminal text selection works without tmux intercepting mouse drag. The parent web app captures vertical wheel events over the terminal iframe and sends them to the tmux scroll API, so the right-side history scrollbar moves without sending arrow-key events to the shell prompt. Start or refresh a session with `MIRROR_TMUX_MOUSE=on` only if you prefer tmux to own all mouse handling.
 
-The right-side web scrollbar combines tmux pane history with tmux client window offset. This matters on small screens when `MIRROR_TMUX_WINDOW_SIZE=largest` keeps the tmux window taller than the iOS Safari viewport: the live tmux screen can have vertical overflow even before lines move into tmux history. The server accounts for tmux's status line when calculating the visible pane height so returning the scrollbar to the bottom lands back on the live prompt, not behind the status line.
+The default `MIRROR_TMUX_WINDOW_SIZE=smallest` keeps browser and SSH clients on the same full tmux screen, which is important for fullscreen terminal apps such as Midnight Commander. If you override this to `largest`, the right-side web scrollbar also accounts for tmux client window offset when a smaller browser or SSH client is panned inside a taller tmux window. The server accounts for tmux's status line when calculating the visible pane height so returning the scrollbar to the bottom lands back on the live prompt, not behind the status line.
 
 `control-agents` also sets a compact tmux status line for managed sessions. The left side shows the session label, for example `[ahoj]` when started with `bin/control-agents ahoj`, and the right side shows the current pane directory through `#{pane_current_path}` without hostname, date, or time. Override the label with `MIRROR_APP_NAME`.
 
@@ -315,7 +315,7 @@ ssh -L 8080:127.0.0.1:8080 user@vm
 - No tabs appear but `<state-dir>/sockets/<session>.sock` exists: reinstall and restart the systemd unit so the service gets the managed `PATH` that includes Homebrew `tmux`.
 - Tab opens but terminal is unavailable: check `<state-dir>/logs/<session>.log` for `ttyd` errors.
 - Session disappears: the service removes stale registry files when the `ttyd` PID, tmux session, or Unix socket is gone.
-- Browser and SSH sizes differ: both clients attach to the same tmux session. The wrapper sets tmux `window-size` to `largest` by default so browser activity does not constantly resize a larger SSH client. Override with `MIRROR_TMUX_WINDOW_SIZE=latest`, `smallest`, or `manual` if needed.
+- Browser and SSH sizes differ: both clients attach to the same tmux session. The wrapper sets tmux `window-size` to `smallest` by default so fullscreen apps render the same complete screen in every client. Override with `MIRROR_TMUX_WINDOW_SIZE=largest`, `latest`, or `manual` only if you prefer different resize behavior.
 - Browser history is too short while the web tab is connected: increase `MIRROR_WEB_SCROLLBACK_LINES` before starting `bin/control-agents <name>`, then reconnect the web tab.
 - Mouse wheel cycles shell command history: reinstall and restart the service so the current web UI captures terminal wheel events. Use the right-side web scrollbar on browsers where iframe wheel handling is unreliable.
 - Use the right-side web scrollbar to scroll tmux pane history and small-client live-window overflow directly.
