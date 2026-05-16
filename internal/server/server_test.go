@@ -24,6 +24,27 @@ func TestUnauthenticatedAPIReturnsUnauthorized(t *testing.T) {
 	}
 }
 
+func TestStaticAssetsArePublic(t *testing.T) {
+	handler := newTestServer(t)
+	tests := map[string]string{
+		"/app.js":     "fetchSessions",
+		"/styles.css": ".login-panel",
+	}
+	for path, want := range tests {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+
+		handler.ServeHTTP(recorder, request)
+
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("%s status = %d, body = %q", path, recorder.Code, recorder.Body.String())
+		}
+		if !strings.Contains(recorder.Body.String(), want) {
+			t.Fatalf("%s body does not contain %q", path, want)
+		}
+	}
+}
+
 func TestLoginAndSessionList(t *testing.T) {
 	handler := newTestServer(t)
 	login := httptest.NewRecorder()
@@ -70,7 +91,7 @@ func TestRootAfterLoginReturnsIndexWithoutRedirect(t *testing.T) {
 	if location := recorder.Header().Get("Location"); location != "" {
 		t.Fatalf("unexpected redirect location %q", location)
 	}
-	if !strings.Contains(recorder.Body.String(), "Terminal Mirror") {
+	if !strings.Contains(recorder.Body.String(), "Control Agents") {
 		t.Fatalf("unexpected index body %q", recorder.Body.String())
 	}
 }

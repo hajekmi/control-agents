@@ -59,6 +59,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) routes() {
 	s.mux.HandleFunc("/login", s.handleLogin)
 	s.mux.HandleFunc("/logout", s.handleLogout)
+	s.mux.HandleFunc("/app.js", s.handlePublicStaticAsset)
+	s.mux.HandleFunc("/styles.css", s.handlePublicStaticAsset)
 	s.mux.Handle("/api/sessions", s.auth.RequireAPI(http.HandlerFunc(s.handleSessions)))
 	s.mux.Handle("/api/sessions/", s.auth.RequireAPI(http.HandlerFunc(s.handleSessionAPI)))
 	s.mux.Handle("/terminal/", s.auth.RequireAPI(proxy.New(s.registry)))
@@ -85,6 +87,21 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusFound)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handlePublicStaticAsset(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	switch r.URL.Path {
+	case "/app.js":
+		http.ServeFileFS(w, r, staticFS, "static/app.js")
+	case "/styles.css":
+		http.ServeFileFS(w, r, staticFS, "static/styles.css")
+	default:
+		http.NotFound(w, r)
 	}
 }
 

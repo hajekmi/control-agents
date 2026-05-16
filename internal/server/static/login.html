@@ -3,18 +3,27 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-    <title>Terminal Mirror Login</title>
+    <title>Control Agents Login</title>
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body class="login-page">
-    <main class="login-panel">
-      <h1>Terminal Mirror</h1>
-      <form method="post" action="/login">
-        <label for="password">Password</label>
-        <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
-        <button type="submit">Sign in</button>
-      </form>
-      <p id="error" hidden>Invalid password.</p>
+    <header class="topbar">
+      <div class="brand-row">
+        <h1>Control Agents</h1>
+      </div>
+    </header>
+    <main class="login-workspace">
+      <section class="login-panel" aria-label="Sign in">
+        <div class="login-panel-header">
+          <h2>Sign in</h2>
+        </div>
+        <form method="post" action="/login">
+          <label for="password">Password</label>
+          <input id="password" name="password" type="password" autocomplete="current-password" aria-describedby="error" required autofocus>
+          <button type="submit">Sign in</button>
+        </form>
+        <p id="error" role="alert" hidden>Invalid password.</p>
+      </section>
     </main>
     <script>
       document.getElementById("error").hidden = !new URLSearchParams(window.location.search).has("error");

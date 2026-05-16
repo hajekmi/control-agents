@@ -1,2 +1,3 @@
 .cache/
+bin/control-agents
 bin/server

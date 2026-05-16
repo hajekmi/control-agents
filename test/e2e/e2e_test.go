@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -52,7 +53,8 @@ func TestRealTmuxAndTtydSessionAppears(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer app.Process.Kill()
-	waitForHTTP(t, ctx, fmt.Sprintf("http://127.0.0.1:%d/login", port))
+	client := insecureHTTPSClient()
+	waitForHTTP(t, ctx, client, fmt.Sprintf("https://127.0.0.1:%d/login", port))
 
 	wrapper := exec.CommandContext(ctx, "../../bin/client_mirror", sessionName)
 	wrapper.Env = append(os.Environ(),
@@ -64,7 +66,7 @@ func TestRealTmuxAndTtydSessionAppears(t *testing.T) {
 		t.Fatalf("wrapper failed: %v\n%s", err, output)
 	}
 
-	waitForSession(t, ctx, port, sessionName)
+	waitForSession(t, ctx, client, port, sessionName)
 	assertTmuxWindowSize(t, sessionName, "largest")
 	assertTmuxMouse(t, sessionName, "on")
 	assertTmuxOption(t, sessionName, "status-left-length", "80")
@@ -72,13 +74,67 @@ func TestRealTmuxAndTtydSessionAppears(t *testing.T) {
 	assertTmuxOption(t, sessionName, "status-right", "#{pane_current_path}")
 	assertTtydCommandLineContains(t, stateDir, sessionName, "scrollback", "2345")
 
-	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/terminal/%s/", port, sessionName))
+	resp, err := client.Get(fmt.Sprintf("https://127.0.0.1:%d/terminal/%s/", port, sessionName))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated terminal status = %d, want %d", resp.StatusCode, http.StatusUnauthorized)
+	}
+}
+
+func TestClientMirrorDefaultsSessionNameToCurrentDirectory(t *testing.T) {
+	if os.Getenv("RUN_E2E") != "1" {
+		t.Skip("set RUN_E2E=1 to run real tmux/ttyd e2e tests")
+	}
+	requireCommand(t, "tmux")
+	requireCommand(t, "ttyd")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	workDir := filepath.Join(t.TempDir(), "default-session-dir")
+	if err := os.Mkdir(workDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	stateDir := filepath.Join(root, ".cache", "e2e-default-session-"+fmt.Sprint(os.Getpid()))
+	_ = os.RemoveAll(stateDir)
+	t.Cleanup(func() { _ = os.RemoveAll(stateDir) })
+	defer exec.Command("tmux", "kill-session", "-t", "default-session-dir").Run()
+	defer killRegisteredTtyd(stateDir, "default-session-dir")
+
+	wrapper := exec.CommandContext(ctx, filepath.Join(root, "bin", "client_mirror"))
+	wrapper.Dir = workDir
+	wrapper.Env = append(os.Environ(),
+		"MIRROR_STATE_DIR="+stateDir,
+		"MIRROR_NO_ATTACH=1",
+	)
+	output, err := wrapper.CombinedOutput()
+	if err != nil {
+		t.Fatalf("wrapper failed: %v\n%s", err, output)
+	}
+	if got := strings.TrimSpace(string(output)); got != "default-session-dir" {
+		t.Fatalf("wrapper output = %q, want default-session-dir", got)
+	}
+	data, err := os.ReadFile(filepath.Join(stateDir, "sessions", "default-session-dir.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var session struct {
+		ID       string `json:"id"`
+		Name     string `json:"name"`
+		TmuxName string `json:"tmuxName"`
+	}
+	if err := json.Unmarshal(data, &session); err != nil {
+		t.Fatal(err)
+	}
+	if session.ID != "default-session-dir" || session.Name != "default-session-dir" || session.TmuxName != "default-session-dir" {
+		t.Fatalf("session = %+v, want default-session-dir names", session)
 	}
 }
 
@@ -173,11 +229,11 @@ func freePort(t *testing.T) int {
 	return listener.Addr().(*net.TCPAddr).Port
 }
 
-func waitForHTTP(t *testing.T, ctx context.Context, url string) {
+func waitForHTTP(t *testing.T, ctx context.Context, client *http.Client, url string) {
 	t.Helper()
 	for {
 		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := client.Do(req)
 		if err == nil {
 			resp.Body.Close()
 			return
@@ -189,19 +245,18 @@ func waitForHTTP(t *testing.T, ctx context.Context, url string) {
 	}
 }
 
-func waitForSession(t *testing.T, ctx context.Context, port int, sessionName string) {
+func waitForSession(t *testing.T, ctx context.Context, baseClient *http.Client, port int, sessionName string) {
 	t.Helper()
-	client := http.Client{
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
+	client := *baseClient
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
 	}
 	for {
 		if ctx.Err() != nil {
 			t.Fatal(ctx.Err())
 		}
 		cookie := login(t, &client, port)
-		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/api/sessions", port), nil)
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("https://127.0.0.1:%d/api/sessions", port), nil)
 		req.AddCookie(cookie)
 		resp, err := client.Do(req)
 		if err == nil {
@@ -227,7 +282,7 @@ func waitForSession(t *testing.T, ctx context.Context, port int, sessionName str
 func login(t *testing.T, client *http.Client, port int) *http.Cookie {
 	t.Helper()
 	body := strings.NewReader("password=secret")
-	resp, err := client.Post(fmt.Sprintf("http://127.0.0.1:%d/login", port), "application/x-www-form-urlencoded", body)
+	resp, err := client.Post(fmt.Sprintf("https://127.0.0.1:%d/login", port), "application/x-www-form-urlencoded", body)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,4 +298,12 @@ func login(t *testing.T, client *http.Client, port int) *http.Cookie {
 	}
 	t.Fatal("missing auth cookie")
 	return nil
+}
+
+func insecureHTTPSClient() *http.Client {
+	return &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
 }

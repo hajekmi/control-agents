@@ -43,6 +43,31 @@ func TestLoadFromEnvReadsPasswordFile(t *testing.T) {
 	if !cfg.CookieSecure {
 		t.Fatal("expected secure cookie")
 	}
+	if cfg.TLSCertFile != filepath.Join(cfg.StateDir, "certs", "server.crt") {
+		t.Fatalf("TLS cert file = %q", cfg.TLSCertFile)
+	}
+	if cfg.TLSKeyFile != filepath.Join(cfg.StateDir, "certs", "server.key") {
+		t.Fatalf("TLS key file = %q", cfg.TLSKeyFile)
+	}
+}
+
+func TestLoadFromEnvReadsTLSPathOverrides(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("MIRROR_PASSWORD", "secret")
+	t.Setenv("MIRROR_STATE_DIR", filepath.Join(dir, "state"))
+	t.Setenv("MIRROR_TLS_CERT_FILE", filepath.Join(dir, "custom.crt"))
+	t.Setenv("MIRROR_TLS_KEY_FILE", filepath.Join(dir, "custom.key"))
+
+	cfg, err := LoadFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TLSCertFile != filepath.Join(dir, "custom.crt") {
+		t.Fatalf("TLS cert file = %q", cfg.TLSCertFile)
+	}
+	if cfg.TLSKeyFile != filepath.Join(dir, "custom.key") {
+		t.Fatalf("TLS key file = %q", cfg.TLSKeyFile)
+	}
 }
 
 func TestValidateRejectsInvalidPort(t *testing.T) {

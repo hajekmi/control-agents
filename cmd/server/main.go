@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"terminal-mirror/internal/cert"
 	"terminal-mirror/internal/config"
 	"terminal-mirror/internal/server"
 )
@@ -28,6 +29,10 @@ func main() {
 		logger.Error("failed to create server", "error", err)
 		os.Exit(1)
 	}
+	if err := cert.EnsureSelfSignedECC(cfg.TLSCertFile, cfg.TLSKeyFile, cfg.BindAddr); err != nil {
+		logger.Error("failed to prepare TLS certificate", "error", err)
+		os.Exit(1)
+	}
 
 	httpServer := &http.Server{
 		Addr:              cfg.ListenAddress(),
@@ -37,8 +42,8 @@ func main() {
 
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("terminal mirror listening", "addr", cfg.ListenAddress(), "state_dir", cfg.StateDir)
-		errCh <- httpServer.ListenAndServe()
+		logger.Info("terminal mirror listening", "scheme", "https", "addr", cfg.ListenAddress(), "state_dir", cfg.StateDir, "tls_cert", cfg.TLSCertFile)
+		errCh <- httpServer.ListenAndServeTLS(cfg.TLSCertFile, cfg.TLSKeyFile)
 	}()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

@@ -21,6 +21,8 @@ type Config struct {
 	Port         int
 	Password     string
 	StateDir     string
+	TLSCertFile  string
+	TLSKeyFile   string
 	CookieSecure bool
 	CookieTTL    int
 }
@@ -34,9 +36,11 @@ func LoadFromEnv() (Config, error) {
 		Port:         defaultPort,
 		Password:     os.Getenv("MIRROR_PASSWORD"),
 		StateDir:     getEnv("MIRROR_STATE_DIR", defaultStateDir),
-		CookieSecure: getBoolEnv("MIRROR_COOKIE_SECURE", false),
+		CookieSecure: getBoolEnv("MIRROR_COOKIE_SECURE", true),
 		CookieTTL:    defaultCookieTTL,
 	}
+	cfg.TLSCertFile = getEnv("MIRROR_TLS_CERT_FILE", filepath.Join(cfg.StateDir, "certs", "server.crt"))
+	cfg.TLSKeyFile = getEnv("MIRROR_TLS_KEY_FILE", filepath.Join(cfg.StateDir, "certs", "server.key"))
 
 	if value := os.Getenv("MIRROR_PORT"); value != "" {
 		port, err := strconv.Atoi(value)
@@ -80,6 +84,12 @@ func (c Config) Validate() error {
 	}
 	if c.StateDir == "" {
 		return errors.New("MIRROR_STATE_DIR cannot be empty")
+	}
+	if c.TLSCertFile == "" {
+		return errors.New("MIRROR_TLS_CERT_FILE cannot be empty")
+	}
+	if c.TLSKeyFile == "" {
+		return errors.New("MIRROR_TLS_KEY_FILE cannot be empty")
 	}
 	if c.CookieTTL <= 0 {
 		return errors.New("MIRROR_COOKIE_TTL_SECONDS must be positive")

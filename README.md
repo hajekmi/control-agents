@@ -49,11 +49,15 @@ Start a mirrored SSH terminal:
 bin/client_mirror codex-main
 ```
 
+When no name is passed, `client_mirror` uses the current directory name. For example, running it from `/home/bestie/codex/control-agents` registers the session as `control-agents`.
+
 Open:
 
 ```text
-http://<vm-host-or-ip>:8080
+https://<vm-host-or-ip>:8080
 ```
+
+On first start the server generates a self-signed ECDSA P-256 certificate under the state directory. Browsers will show a certificate warning until you trust that certificate or provide your own TLS certificate.
 
 New sessions started with `bin/client_mirror <name>` appear as tabs automatically. Only wrapper-started sessions are registered.
 
@@ -66,7 +70,9 @@ The Go service reads:
 - `MIRROR_PASSWORD`, required unless `MIRROR_PASSWORD_FILE` is set
 - `MIRROR_PASSWORD_FILE`, optional newline-trimmed password file
 - `MIRROR_STATE_DIR`, default `$HOME/.local/state/terminal-mirror`
-- `MIRROR_COOKIE_SECURE`, default `false` for HTTP
+- `MIRROR_TLS_CERT_FILE`, default `$MIRROR_STATE_DIR/certs/server.crt`
+- `MIRROR_TLS_KEY_FILE`, default `$MIRROR_STATE_DIR/certs/server.key`
+- `MIRROR_COOKIE_SECURE`, default `true` for HTTPS
 - `MIRROR_COOKIE_TTL_SECONDS`, default `43200`
 
 The wrapper reads:
@@ -84,6 +90,7 @@ The shared state directory contains:
 - `sessions/*.json` registry files
 - `sockets/*.sock` private `ttyd` Unix sockets
 - `logs/*.log` per-session `ttyd` logs
+- `certs/server.crt` and `certs/server.key` when the default generated TLS files are used
 
 Keep `MIRROR_STATE_DIR` reasonably short. Unix domain socket paths have a small system limit, and the wrapper fails early when the generated socket path is too long.
 
@@ -99,6 +106,7 @@ Unauthenticated routes:
 
 - `GET /login`: login page.
 - `POST /login`: form login. Expects `password` in an `application/x-www-form-urlencoded` body. Success sets the auth cookie and redirects to `/`; failure redirects to `/login?error=1`.
+- `GET /app.js` and `GET /styles.css`: static UI assets used by the login and app pages.
 
 Authenticated routes:
 
@@ -108,11 +116,10 @@ Authenticated routes:
 - `GET /api/sessions/{session}/scroll`: returns tmux history scrollbar state for the active pane.
 - `POST /api/sessions/{session}/scroll`: scrolls tmux history. Body actions are `line-up`, `line-down`, `page-up`, `page-down`, `top`, `bottom`, or `set`.
 - `GET /terminal/{session}/...`: reverse proxies HTTP and WebSocket traffic to the matching `ttyd` Unix socket.
-- `GET /app.js` and `GET /styles.css`: static UI assets.
 
-The browser UI uses normal HTTP for login, static assets, and JSON API calls. `/api/*` endpoints return `401 unauthorized` when the auth cookie is missing or expired, so `app.js` can redirect the browser back to `/login` without receiving an HTML login page as an API response.
+The browser UI uses regular HTTPS requests for login, static assets, and JSON API calls. `/api/*` endpoints return `401 unauthorized` when the auth cookie is missing or expired, so `app.js` can redirect the browser back to `/login` without receiving an HTML login page as an API response.
 
-Go-served HTTP responses are gzip-compressed when the client sends `Accept-Encoding: gzip`. This includes `/login`, `/app.js`, `/styles.css`, and `/api/*` JSON responses. The `/terminal/{session}/...` ttyd proxy is excluded from this middleware, including both ttyd HTTP traffic and WebSocket upgrades.
+Go-served responses are gzip-compressed when the client sends `Accept-Encoding: gzip`. This includes `/login`, `/app.js`, `/styles.css`, and `/api/*` JSON responses. The `/terminal/{session}/...` ttyd proxy is excluded from this middleware, including both ttyd HTTP traffic and WebSocket upgrades.
 
 Example `GET /api/sessions` response:
 
@@ -147,36 +154,47 @@ Example scroll command:
 
 ## systemd User Service
 
-Build and install the binary:
+Install the binary and user systemd unit:
 
 ```sh
-make build
-mkdir -p ~/.local/bin ~/.config/terminal-mirror
-cp bin/server ~/.local/bin/server
-cp systemd/user/server.service ~/.config/systemd/user/server.service
+make install
 ```
 
-Create `~/.config/terminal-mirror/env`:
+`make install` also creates `~/.config/terminal-mirror/env` with a generated password when it does not already exist. Edit it if you want a custom password or bind address:
 
 ```sh
-MIRROR_PASSWORD=change-me
+MIRROR_PASSWORD=<generated>
 MIRROR_BIND_ADDR=0.0.0.0
 MIRROR_PORT=8080
-MIRROR_COOKIE_SECURE=false
 ```
+
+The same target installs the wrapper as `/usr/local/bin/client_mirror`, using `sudo` for that one file when `/usr/local/bin` is not writable. Override the path with `CLIENT_MIRROR_INSTALL=/path/to/client_mirror` if needed.
 
 Enable and start:
 
 ```sh
-systemctl --user daemon-reload
-systemctl --user enable --now server.service
+systemctl --user enable --now control-agents.service
+```
+
+After later updates, rebuild, reinstall, and restart the service:
+
+```sh
+make install restart
 ```
 
 Check logs:
 
 ```sh
-journalctl --user -u server.service -f
+journalctl --user -u control-agents.service -f
 ```
+
+Uninstall the binary and user systemd unit:
+
+```sh
+make uninstall
+```
+
+`make uninstall` does not remove `~/.config/terminal-mirror/env` or the state directory.
 
 ## Podman Notes
 
@@ -185,7 +203,7 @@ Systemd host deployment is the primary v1 path. Podman can work later for the Go
 Example build:
 
 ```sh
-podman build -t terminal-mirror-server .
+podman build -t control-agents-server .
 ```
 
 Example run shape:
@@ -197,7 +215,7 @@ podman run --rm \
   -e MIRROR_BIND_ADDR=0.0.0.0 \
   -e MIRROR_STATE_DIR=/state \
   -v "$HOME/.local/state/terminal-mirror:/state:Z" \
-  terminal-mirror-server
+  control-agents-server
 ```
 
 On hosts where SELinux relabeling breaks Unix socket access, use the appropriate local policy or mount option for that host. The wrapper still runs on the host.
@@ -206,15 +224,9 @@ In the container path only the Go server belongs in the container. `client_mirro
 
 ## Security
 
-The v1 service can bind publicly, but password-only HTTP is not safe on untrusted networks. The password, cookies, terminal output, and terminal input can be observed without TLS.
+The service uses HTTPS by default with an automatically generated self-signed ECC certificate. The password, cookies, terminal output, and terminal input are encrypted on the wire, but the browser cannot verify a self-signed certificate until you trust it locally or configure `MIRROR_TLS_CERT_FILE` and `MIRROR_TLS_KEY_FILE` with a certificate from a trusted authority.
 
-Before using this outside a trusted network, put the service behind HTTPS with a reverse proxy such as Caddy or nginx, then set:
-
-```sh
-MIRROR_COOKIE_SECURE=true
-```
-
-For safer interim access, bind to `127.0.0.1` and use SSH port forwarding:
+For local-only access, bind to `127.0.0.1` and use SSH port forwarding:
 
 ```sh
 ssh -L 8080:127.0.0.1:8080 user@vm
@@ -223,6 +235,7 @@ ssh -L 8080:127.0.0.1:8080 user@vm
 ## Troubleshooting
 
 - No tabs appear: start sessions through `bin/client_mirror <name>` and confirm service and wrapper use the same `MIRROR_STATE_DIR`.
+- No tabs appear but `<state-dir>/sockets/<session>.sock` exists: reinstall and restart the systemd unit so the service gets the managed `PATH` that includes Homebrew `tmux`.
 - Tab opens but terminal is unavailable: check `<state-dir>/logs/<session>.log` for `ttyd` errors.
 - Session disappears: the service removes stale registry files when the `ttyd` PID, tmux session, or Unix socket is gone.
 - Browser and SSH sizes differ: both clients attach to the same tmux session. The wrapper sets tmux `window-size` to `largest` by default so browser activity does not constantly resize a larger SSH client. Override with `MIRROR_TMUX_WINDOW_SIZE=latest`, `smallest`, or `manual` if needed.

@@ -1,9 +1,8 @@
 (function () {
   const tabs = document.getElementById("tabs");
-  const pane = document.getElementById("terminal-pane");
   const terminalStrip = document.getElementById("terminal-strip");
   const emptyState = document.getElementById("empty-state");
-  const status = document.getElementById("status");
+  const heartbeat = document.getElementById("heartbeat");
   const historyScrollbar = document.getElementById("history-scrollbar");
   const historyTrack = document.getElementById("history-track");
   const historyThumb = document.getElementById("history-thumb");
@@ -14,6 +13,20 @@
   let scrollState = null;
   let dragging = false;
   let pendingSetTimer = 0;
+
+  function setHeartbeat(state) {
+    heartbeat.dataset.state = state;
+    if (state === "online") {
+      heartbeat.title = "Server connected";
+      heartbeat.setAttribute("aria-label", "Server connected");
+    } else if (state === "offline") {
+      heartbeat.title = "Server unreachable";
+      heartbeat.setAttribute("aria-label", "Server unreachable");
+    } else {
+      heartbeat.title = "Checking server";
+      heartbeat.setAttribute("aria-label", "Checking server");
+    }
+  }
 
   async function fetchSessions() {
     const response = await fetch("/api/sessions", { credentials: "same-origin" });
@@ -79,14 +92,14 @@
     } else {
       emptyState.hidden = false;
     }
-    status.textContent = `${sessions.length} active session${sessions.length === 1 ? "" : "s"}`;
   }
 
   async function refresh() {
     try {
       render(await fetchSessions());
+      setHeartbeat("online");
     } catch (error) {
-      status.textContent = "Failed to refresh sessions";
+      setHeartbeat("offline");
       console.error(error);
     }
   }

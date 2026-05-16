@@ -12,12 +12,14 @@
         <h1>Control Agents</h1>
         <nav id="tabs" class="tabs" aria-label="Terminal sessions"></nav>
       </div>
-      <form method="post" action="/logout">
-        <button type="submit" class="secondary">Sign out</button>
-      </form>
+      <div class="topbar-actions">
+        <span id="heartbeat" class="heartbeat" data-state="checking" role="status" aria-label="Checking server" title="Checking server"></span>
+        <form method="post" action="/logout">
+          <button type="submit" class="secondary">Sign out</button>
+        </form>
+      </div>
     </header>
     <main class="workspace">
-      <div id="status" class="status" aria-live="polite">Loading sessions...</div>
       <section id="terminal-pane" class="terminal-pane">
         <div id="empty-state" class="empty-state">No mirrored terminals are registered.</div>
         <div id="terminal-strip" class="terminal-strip"></div>

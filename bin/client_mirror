@@ -2,7 +2,8 @@
 set -euo pipefail
 
 STATE_DIR="${MIRROR_STATE_DIR:-"$HOME/.local/state/terminal-mirror"}"
-SESSION_NAME="${1:-"mirror-$(date +%Y%m%d-%H%M%S)"}"
+DEFAULT_SESSION_NAME="$(basename "$PWD")"
+SESSION_NAME="${1:-"$DEFAULT_SESSION_NAME"}"
 DISPLAY_NAME="${MIRROR_DISPLAY_NAME:-$SESSION_NAME}"
 APP_NAME="${MIRROR_APP_NAME:-$DISPLAY_NAME}"
 TMUX_WINDOW_SIZE="${MIRROR_TMUX_WINDOW_SIZE:-largest}"

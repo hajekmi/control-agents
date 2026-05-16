@@ -8,8 +8,8 @@ documentation. Keep this file focused on working rules for future agents.
 - Write code, comments, identifiers, function names, variable names, and commit
   text in English.
 - Keep implementation scoped and structured by the existing packages:
-  `internal/config`, `internal/auth`, `internal/registry`, `internal/proxy`, and
-  `internal/server`.
+  `internal/config`, `internal/auth`, `internal/cert`, `internal/registry`,
+  `internal/proxy`, and `internal/server`.
 - Do not introduce a frontend build step unless the user explicitly asks for it.
   The UI is plain embedded HTML/CSS/JS.
 - Keep the UI compact and operational. This is a terminal tool, not a marketing
@@ -45,9 +45,8 @@ documentation. Keep this file focused on working rules for future agents.
 - Do not log passwords, auth cookies, terminal input, or terminal output.
 - Keep state directory permissions private: directories `0700`, registry files
   `0600`.
-- Public HTTP/password-only mode is an accepted v1 product decision, but do not
-  weaken the code further around auth, cookies, proxying, or socket exposure.
-- If adding HTTPS support later, set or document `MIRROR_COOKIE_SECURE=true`.
+- HTTPS is the default server mode. Keep `MIRROR_COOKIE_SECURE=true` as the
+  default unless the user explicitly needs an HTTP-only test/development path.
 - Keep gzip middleware limited to Go-served HTTP responses. Do not wrap
   `/terminal/` proxy traffic or WebSocket upgrades unless that is explicitly
   requested and tested.
