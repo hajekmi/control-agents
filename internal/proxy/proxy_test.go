@@ -128,7 +128,14 @@ func (f fakeStore) Alive(session registry.Session) bool {
 
 func startUnixHTTPServer(t *testing.T, handler http.Handler) (string, func()) {
 	t.Helper()
-	socketPath := filepath.Join(t.TempDir(), "upstream.sock")
+	dir, err := os.MkdirTemp("", "ca-proxy-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.RemoveAll(dir)
+	})
+	socketPath := filepath.Join(dir, "u.sock")
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
 		t.Fatal(err)

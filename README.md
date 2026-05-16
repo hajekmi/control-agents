@@ -4,7 +4,7 @@ Terminal Mirror exposes wrapper-started tmux sessions through one password-prote
 
 ## Requirements
 
-- Go 1.25 or newer for building.
+- Go 1.25 or newer can build the module, but release/security builds should use the latest stable Go toolchain. As of 2026-05-16, the official stable release is Go 1.26.3.
 - `tmux` for shared terminal sessions.
 - `ttyd` for browser terminal I/O.
 - `make` for the provided workflow.
@@ -150,6 +150,8 @@ Authenticated routes:
 
 The browser UI uses regular HTTPS requests for login, static assets, and JSON API calls. `/api/*` endpoints return `401 unauthorized` when the auth cookie is missing or expired, so `app.js` can redirect the browser back to `/login` without receiving an HTML login page as an API response.
 
+Authenticated mutating routes require a same-origin `Origin` header, with `Referer` as a fallback for older clients. Terminal WebSocket upgrades under `/terminal/{session}/...` use the same origin check. This is intentionally strict because terminal actions are remote shell input.
+
 Go-served responses are gzip-compressed when the client sends `Accept-Encoding: gzip`. This includes `/login`, `/app.js`, `/styles.css`, and `/api/*` JSON responses. The `/terminal/{session}/...` ttyd proxy is excluded from this middleware, including both ttyd HTTP traffic and WebSocket upgrades.
 
 Example `GET /api/sessions` response:
@@ -171,6 +173,8 @@ Example `GET /api/sessions` response:
 ```
 
 Successful login sets the `terminal_mirror_session` cookie. The cookie is signed with a persistent secret stored under the state directory, so sessions remain valid across server restarts until `MIRROR_COOKIE_TTL_SECONDS` expires or the auth secret file is removed.
+
+Failed logins are rate-limited in server memory per direct client IP: 10 failed attempts in 5 minutes returns `429 Too Many Requests` with `Retry-After`. A successful login clears that IP's failures, and restarting the daemon resets the limiter.
 
 Example scroll command:
 
@@ -264,6 +268,8 @@ In the container path only the Go server belongs in the container. `control-agen
 ## Security
 
 The service uses HTTPS by default with an automatically generated self-signed ECC certificate. The password, cookies, terminal output, and terminal input are encrypted on the wire, but the browser cannot verify a self-signed certificate until you trust it locally or configure `MIRROR_TLS_CERT_FILE` and `MIRROR_TLS_KEY_FILE` with a certificate from a trusted authority.
+
+Go-served pages and API responses include security headers: CSP for the app shell, `X-Frame-Options: SAMEORIGIN`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`, and a restrictive `Permissions-Policy`. CSP is not applied to `/terminal/` proxy responses so embedded `ttyd` assets keep working.
 
 For local-only access, bind to `127.0.0.1` and use SSH port forwarding:
 

@@ -4,6 +4,12 @@ Versions use calendar numbering: `YYYY.M.REVISION`.
 
 ## Unreleased
 
+## 2026.5.4 - 2026-05-16
+
+- Added in-memory per-IP login rate limiting.
+- Added same-origin protection for mutating routes and terminal WebSocket upgrades.
+- Added security headers for Go-served web UI and API responses.
+
 ## 2026.5.3 - 2026-05-16
 
 - Compact the web UI topbar for iOS Safari by moving `Keys` and `Sign out` into one menu.

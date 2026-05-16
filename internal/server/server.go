@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,6 +31,7 @@ type Server struct {
 	tmux     *tmux.Client
 	logger   *slog.Logger
 	mux      *http.ServeMux
+	limiter  *loginLimiter
 }
 
 func New(cfg config.Config, logger *slog.Logger) (*Server, error) {
@@ -58,12 +60,18 @@ func New(cfg config.Config, logger *slog.Logger) (*Server, error) {
 		tmux:     tmux.NewClient(),
 		logger:   logger,
 		mux:      http.NewServeMux(),
+		limiter:  newLoginLimiter(loginAttemptLimit, loginAttemptWindow),
 	}
 	server.routes()
 	return server, nil
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	applySecurityHeaders(w, r)
+	if requiresSameOrigin(r) && !sameOrigin(r) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 	compress.Middleware(s.mux).ServeHTTP(w, r)
 }
 
@@ -71,6 +79,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/login", s.handleLogin)
 	s.mux.HandleFunc("/logout", s.handleLogout)
 	s.mux.HandleFunc("/app.js", s.handlePublicStaticAsset)
+	s.mux.HandleFunc("/login.js", s.handlePublicStaticAsset)
 	s.mux.HandleFunc("/styles.css", s.handlePublicStaticAsset)
 	s.mux.Handle("/api/version", s.auth.RequireAPI(http.HandlerFunc(s.handleVersion)))
 	s.mux.Handle("/api/sessions", s.auth.RequireAPI(http.HandlerFunc(s.handleSessions)))
@@ -88,14 +97,26 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 		http.ServeFileFS(w, r, staticFS, "static/login.html")
 	case http.MethodPost:
+		client := clientIP(r)
+		if ok, retryAfter := s.limiter.Allow(client); !ok {
+			seconds := int(retryAfter.Seconds())
+			if seconds < 1 {
+				seconds = 1
+			}
+			w.Header().Set("Retry-After", strconv.Itoa(seconds))
+			http.Error(w, "too many login attempts", http.StatusTooManyRequests)
+			return
+		}
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "invalid form", http.StatusBadRequest)
 			return
 		}
 		if !s.auth.Login(w, r.FormValue("password")) {
+			s.limiter.RecordFailure(client)
 			http.Redirect(w, r, "/login?error=1", http.StatusFound)
 			return
 		}
+		s.limiter.Reset(client)
 		http.Redirect(w, r, "/", http.StatusFound)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -110,6 +131,8 @@ func (s *Server) handlePublicStaticAsset(w http.ResponseWriter, r *http.Request)
 	switch r.URL.Path {
 	case "/app.js":
 		http.ServeFileFS(w, r, staticFS, "static/app.js")
+	case "/login.js":
+		http.ServeFileFS(w, r, staticFS, "static/login.js")
 	case "/styles.css":
 		http.ServeFileFS(w, r, staticFS, "static/styles.css")
 	default:

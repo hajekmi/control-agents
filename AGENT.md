@@ -50,6 +50,13 @@ documentation. Keep this file focused on working rules for future agents.
   `0600`, auth secret `0600`.
 - HTTPS is the default server mode. Keep `MIRROR_COOKIE_SECURE=true` as the
   default unless the user explicitly needs an HTTP-only test/development path.
+- Preserve the in-memory login rate limiter unless the user explicitly changes
+  the security model. It is intentionally per direct client IP and reset on
+  daemon restart.
+- Preserve same-origin checks for authenticated mutating routes and terminal
+  WebSocket upgrades. Terminal input is a remote shell action.
+- Keep security headers on Go-served responses. Avoid applying CSP to
+  `/terminal/` proxy responses unless ttyd compatibility has been tested.
 - Keep gzip middleware limited to Go-served HTTP responses. Do not wrap
   `/terminal/` proxy traffic or WebSocket upgrades unless that is explicitly
   requested and tested.
