@@ -27,7 +27,9 @@ documentation. Keep this file focused on working rules for future agents.
   calls server tmux-scroll APIs and should keep working even when iframe wheel
   events are unreliable on mobile browsers. It must account for both tmux pane
   history and tmux client window offset when `window-size largest` makes the
-  tmux window larger than a small browser viewport.
+  tmux window larger than a small browser viewport. When status is enabled,
+  subtract the tmux status line from client height before calculating bottom
+  offsets, otherwise the prompt can end up hidden behind the status line.
 - Do not expose per-session `ttyd` TCP ports. `ttyd` must stay behind Unix
   sockets in the shared state directory.
 - Only wrapper-started sessions should appear in the UI unless the user changes

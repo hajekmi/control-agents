@@ -127,7 +127,7 @@ Keep `MIRROR_STATE_DIR` reasonably short. Unix domain socket paths have a small 
 
 Because the browser is attached to tmux, mouse wheel history is primarily tmux pane history, not xterm.js scrollback. `control-agents` enables `MIRROR_TMUX_MOUSE=on` by default so the wheel scrolls tmux history instead of sending arrow-key events to the shell prompt. Disable it with `MIRROR_TMUX_MOUSE=off` if you prefer the old tmux behavior.
 
-The right-side web scrollbar combines tmux pane history with tmux client window offset. This matters on small screens when `MIRROR_TMUX_WINDOW_SIZE=largest` keeps the tmux window taller than the iOS Safari viewport: the live tmux screen can have vertical overflow even before lines move into tmux history.
+The right-side web scrollbar combines tmux pane history with tmux client window offset. This matters on small screens when `MIRROR_TMUX_WINDOW_SIZE=largest` keeps the tmux window taller than the iOS Safari viewport: the live tmux screen can have vertical overflow even before lines move into tmux history. The server accounts for tmux's status line when calculating the visible pane height so returning the scrollbar to the bottom lands back on the live prompt, not behind the status line.
 
 `control-agents` also sets a compact tmux status line for managed sessions. The left side shows the session label, for example `[ahoj]` when started with `bin/control-agents ahoj`, and the right side shows the current pane directory through `#{pane_current_path}` without hostname, date, or time. Override the label with `MIRROR_APP_NAME`.
 

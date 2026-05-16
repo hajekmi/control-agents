@@ -46,6 +46,7 @@
   let scrollState = null;
   let dragging = false;
   let pendingSetTimer = 0;
+  let pendingTerminalRepaintTimer = 0;
 
   function setHeartbeat(state) {
     heartbeat.dataset.state = state;
@@ -199,6 +200,13 @@
     });
   }
 
+  function scheduleLiveTerminalRepaint() {
+    focusActiveTerminal();
+    requestTerminalResize();
+    window.clearTimeout(pendingTerminalRepaintTimer);
+    pendingTerminalRepaintTimer = window.setTimeout(requestTerminalResize, 120);
+  }
+
   async function fetchScrollState() {
     if (!activeId) return null;
     const response = await fetch(`/api/sessions/${encodeURIComponent(activeId)}/scroll`, { credentials: "same-origin" });
@@ -217,6 +225,9 @@
     if (!response.ok) return null;
     const next = await response.json();
     updateScrollUI(next);
+    if (isLiveBottom(next)) {
+      scheduleLiveTerminalRepaint();
+    }
     return next;
   }
 
@@ -321,6 +332,10 @@
     historyTrack.setAttribute("aria-valuenow", String(scrollState.scrollTop));
     historyThumb.style.height = `${thumbHeight}px`;
     historyThumb.style.transform = `translateY(${top}px)`;
+  }
+
+  function isLiveBottom(state) {
+    return state && state.scrollMax > 0 && state.scrollTop >= state.scrollMax;
   }
 
   function scrollTopFromPointer(event) {

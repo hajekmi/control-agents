@@ -245,7 +245,10 @@ func (c *Client) lineUp(ctx context.Context, target string, state ScrollState, a
 
 func (c *Client) lineDown(ctx context.Context, target string, state ScrollState, amount int) error {
 	if state.InCopyMode || state.Position > 0 {
-		return c.sendCopyCommand(ctx, target, amount, "scroll-down")
+		if err := c.sendCopyCommand(ctx, target, amount, "scroll-down"); err != nil {
+			return err
+		}
+		return c.cancelCopyModeAtLiveBottom(ctx, target)
 	}
 	return c.adjustClientOffset(ctx, state, "down", min(amount, state.WindowOverflow-state.WindowOffsetY))
 }
@@ -268,7 +271,10 @@ func (c *Client) pageUp(ctx context.Context, target string, state ScrollState, a
 
 func (c *Client) pageDown(ctx context.Context, target string, state ScrollState, amount int) error {
 	if state.InCopyMode || state.Position > 0 {
-		return c.sendCopyCommand(ctx, target, amount, "page-down")
+		if err := c.sendCopyCommand(ctx, target, amount, "page-down"); err != nil {
+			return err
+		}
+		return c.cancelCopyModeAtLiveBottom(ctx, target)
 	}
 	return c.adjustClientOffset(ctx, state, "down", min(amount*state.pageRows(), state.WindowOverflow-state.WindowOffsetY))
 }
@@ -324,6 +330,27 @@ func (c *Client) adjustClientOffset(ctx context.Context, state ScrollState, dire
 	return c.runner.Run(ctx, "tmux", "refresh-client", "-t", state.clientName, flag, strconv.Itoa(amount))
 }
 
+func (c *Client) cancelCopyModeAtLiveBottom(ctx context.Context, target string) error {
+	state, err := c.Status(ctx, target)
+	if err != nil {
+		return err
+	}
+	if !state.InCopyMode || state.Position > 0 {
+		return nil
+	}
+	if err := c.sendCopyCommand(ctx, target, 1, "cancel"); err != nil {
+		return err
+	}
+	if state.hasClientOverflow() {
+		next, err := c.Status(ctx, target)
+		if err != nil {
+			return err
+		}
+		return c.setClientOffset(ctx, next, next.WindowOverflow)
+	}
+	return nil
+}
+
 func parseScrollState(output string) (ScrollState, error) {
 	parts := strings.Split(strings.TrimSpace(output), "|")
 	if len(parts) != 4 {
@@ -374,10 +401,11 @@ type clientView struct {
 	height       int
 	windowHeight int
 	offsetY      int
+	statusOn     bool
 }
 
 func (c *Client) scrollClient(ctx context.Context, target string) (clientView, error) {
-	output, err := c.runner.Output(ctx, "tmux", "list-clients", "-t", target, "-F", "#{client_name}|#{client_height}|#{window_height}|#{window_offset_y}")
+	output, err := c.runner.Output(ctx, "tmux", "list-clients", "-t", target, "-F", "#{client_name}|#{client_height}|#{window_height}|#{window_offset_y}|#{status}")
 	if err != nil {
 		return clientView{}, err
 	}
@@ -405,7 +433,7 @@ func (c *Client) scrollClient(ctx context.Context, target string) (clientView, e
 
 func parseClientView(line string) (clientView, error) {
 	parts := strings.Split(strings.TrimSpace(line), "|")
-	if len(parts) != 4 {
+	if len(parts) != 5 {
 		return clientView{}, errors.New("unexpected tmux client format")
 	}
 	height, err := parseOptionalInt(parts[1])
@@ -434,6 +462,7 @@ func parseClientView(line string) (clientView, error) {
 		height:       height,
 		windowHeight: windowHeight,
 		offsetY:      offsetY,
+		statusOn:     strings.EqualFold(parts[4], "on") || parts[4] == "1",
 	}, nil
 }
 
@@ -441,7 +470,8 @@ func (state *ScrollState) applyClientView(view clientView) {
 	if view.name == "" || view.height <= 0 || view.windowHeight <= 0 {
 		return
 	}
-	overflow := view.windowHeight - view.height
+	visibleHeight := view.visiblePaneHeight()
+	overflow := view.windowHeight - visibleHeight
 	if overflow < 0 {
 		overflow = 0
 	}
@@ -449,7 +479,7 @@ func (state *ScrollState) applyClientView(view clientView) {
 		view.offsetY = overflow
 	}
 	state.clientName = view.name
-	state.clientHeight = view.height
+	state.clientHeight = visibleHeight
 	state.WindowHeight = view.windowHeight
 	state.WindowOffsetY = view.offsetY
 	state.WindowOverflow = overflow
@@ -461,9 +491,20 @@ func (state *ScrollState) applyClientView(view clientView) {
 	if state.ScrollTop > state.ScrollMax {
 		state.ScrollTop = state.ScrollMax
 	}
-	if overflow > 0 && view.height < state.PaneHeight {
-		state.PaneHeight = view.height
+	if overflow > 0 && visibleHeight < state.PaneHeight {
+		state.PaneHeight = visibleHeight
 	}
+}
+
+func (view clientView) visiblePaneHeight() int {
+	height := view.height
+	if view.statusOn {
+		height--
+	}
+	if height < 1 {
+		return 1
+	}
+	return height
 }
 
 func (state ScrollState) hasClientOverflow() bool {
