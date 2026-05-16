@@ -19,8 +19,9 @@ documentation. Keep this file focused on working rules for future agents.
 
 ## Runtime Boundaries
 
-- `server` owns auth, API, static UI, session discovery, and proxying.
-- `client_mirror` owns tmux session creation/attach, `ttyd` startup, and
+- `control-agents-server` owns auth, API, static UI, session discovery, and
+  proxying.
+- `control-agents` owns tmux session creation/attach, `ttyd` startup, and
   registry file creation.
 - The right-side web scrollbar is owned by the parent app, not by ttyd. It
   calls server tmux-scroll APIs and should keep working even when iframe wheel
@@ -54,7 +55,7 @@ documentation. Keep this file focused on working rules for future agents.
 ## Tests
 
 - Run `make test` after code changes.
-- Run `make test-e2e` when changing `bin/client_mirror`, tmux behavior, `ttyd`
+- Run `make test-e2e` when changing `bin/control-agents`, tmux behavior, `ttyd`
   startup, registry compatibility, or proxy routing.
 - The Makefile intentionally sets workspace-local Go caches, `TMUX_TMPDIR`, cgo
   off, and `GOFLAGS=-buildvcs=false` for restricted execution environments.

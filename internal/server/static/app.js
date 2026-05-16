@@ -9,6 +9,7 @@
   const scrollTopButton = document.getElementById("scroll-top");
   const scrollBottomButton = document.getElementById("scroll-bottom");
   const keysToggle = document.getElementById("keys-toggle");
+  const versionBadge = document.getElementById("version-badge");
   const keyPanel = document.getElementById("key-panel");
   const keysClose = document.getElementById("keys-close");
   const keyGrid = document.getElementById("key-grid");
@@ -68,6 +69,47 @@
     }
     const payload = await response.json();
     return payload.sessions || [];
+  }
+
+  async function fetchVersion() {
+    const response = await fetch("/api/version", { credentials: "same-origin" });
+    if (response.status === 401) {
+      window.location.href = "/login";
+      return null;
+    }
+    if (!response.ok) {
+      throw new Error(`version request failed: ${response.status}`);
+    }
+    return response.json();
+  }
+
+  function setVersionInfo(info) {
+    if (!info || !info.version) {
+      versionBadge.hidden = true;
+      return;
+    }
+
+    const version = String(info.version);
+    const label = version === "dev" ? "dev" : `v${version}`;
+    const title = [
+      `Version ${version}`,
+      info.commit ? `Commit ${info.commit}` : "",
+      info.buildDate ? `Built ${info.buildDate}` : ""
+    ].filter(Boolean);
+
+    versionBadge.textContent = label;
+    versionBadge.title = title.join("\n");
+    versionBadge.setAttribute("aria-label", title.join(", "));
+    versionBadge.hidden = false;
+  }
+
+  async function refreshVersion() {
+    try {
+      setVersionInfo(await fetchVersion());
+    } catch (error) {
+      versionBadge.hidden = true;
+      console.error(error);
+    }
   }
 
   function activate(id) {
@@ -349,6 +391,7 @@
   keysClose.addEventListener("click", () => setKeyPanelOpen(false));
 
   renderKeyButtons();
+  refreshVersion();
   refresh();
   window.setInterval(refresh, 3000);
   window.setInterval(refreshScrollState, 1500);

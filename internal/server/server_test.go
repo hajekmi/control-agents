@@ -26,11 +26,11 @@ func TestUnauthenticatedAPIReturnsUnauthorized(t *testing.T) {
 
 func TestStaticAssetsArePublic(t *testing.T) {
 	handler := newTestServer(t)
-	tests := map[string]string{
-		"/app.js":     "fetchSessions",
-		"/styles.css": ".login-panel",
+	tests := map[string][]string{
+		"/app.js":     {"fetchSessions"},
+		"/styles.css": {".login-panel", ".terminal-frame[hidden]"},
 	}
-	for path, want := range tests {
+	for path, wants := range tests {
 		recorder := httptest.NewRecorder()
 		request := httptest.NewRequest(http.MethodGet, path, nil)
 
@@ -39,8 +39,10 @@ func TestStaticAssetsArePublic(t *testing.T) {
 		if recorder.Code != http.StatusOK {
 			t.Fatalf("%s status = %d, body = %q", path, recorder.Code, recorder.Body.String())
 		}
-		if !strings.Contains(recorder.Body.String(), want) {
-			t.Fatalf("%s body does not contain %q", path, want)
+		for _, want := range wants {
+			if !strings.Contains(recorder.Body.String(), want) {
+				t.Fatalf("%s body does not contain %q", path, want)
+			}
 		}
 	}
 }

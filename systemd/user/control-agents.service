@@ -9,7 +9,7 @@ Environment=MIRROR_PORT=8080
 Environment=MIRROR_STATE_DIR=%h/.local/state/terminal-mirror
 Environment=PATH=%h/.local/bin:/home/linuxbrew/.linuxbrew/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
 EnvironmentFile=%h/.config/terminal-mirror/env
-ExecStart=%h/.local/bin/control-agents
+ExecStart=%h/.local/bin/control-agents-server
 Restart=on-failure
 RestartSec=3
 

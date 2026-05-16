@@ -56,7 +56,7 @@ func TestRealTmuxAndTtydSessionAppears(t *testing.T) {
 	client := insecureHTTPSClient()
 	waitForHTTP(t, ctx, client, fmt.Sprintf("https://127.0.0.1:%d/login", port))
 
-	wrapper := exec.CommandContext(ctx, "../../bin/client_mirror", sessionName)
+	wrapper := exec.CommandContext(ctx, "../../bin/control-agents", sessionName)
 	wrapper.Env = append(os.Environ(),
 		"MIRROR_STATE_DIR="+stateDir,
 		"MIRROR_NO_ATTACH=1",
@@ -84,7 +84,7 @@ func TestRealTmuxAndTtydSessionAppears(t *testing.T) {
 	}
 }
 
-func TestClientMirrorDefaultsSessionNameToCurrentDirectory(t *testing.T) {
+func TestClientDefaultsSessionNameToCurrentDirectory(t *testing.T) {
 	if os.Getenv("RUN_E2E") != "1" {
 		t.Skip("set RUN_E2E=1 to run real tmux/ttyd e2e tests")
 	}
@@ -108,7 +108,7 @@ func TestClientMirrorDefaultsSessionNameToCurrentDirectory(t *testing.T) {
 	defer exec.Command("tmux", "kill-session", "-t", "default-session-dir").Run()
 	defer killRegisteredTtyd(stateDir, "default-session-dir")
 
-	wrapper := exec.CommandContext(ctx, filepath.Join(root, "bin", "client_mirror"))
+	wrapper := exec.CommandContext(ctx, filepath.Join(root, "bin", "control-agents"))
 	wrapper.Dir = workDir
 	wrapper.Env = append(os.Environ(),
 		"MIRROR_STATE_DIR="+stateDir,

@@ -19,7 +19,7 @@ import (
 
 func main() {
 	if len(os.Args) == 2 && os.Args[1] == "--version" {
-		fmt.Printf("control-agents %s\n", version.String())
+		fmt.Printf("control-agents-server %s\n", version.String())
 		return
 	}
 

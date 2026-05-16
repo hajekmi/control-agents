@@ -2,6 +2,14 @@
 
 Versions use calendar numbering: `YYYY.M.REVISION`.
 
+## Unreleased
+
+## 2026.5.2 - 2026-05-16
+
+- Display the running server version in the web UI.
+- Rename the installed server binary to `control-agents-server` and the wrapper client to `control-agents`.
+- Fix terminal tab switching when multiple session iframes are present.
+
 ## 2026.5.1 - 2026-05-16
 
 - Added mobile-friendly special keys panel for terminal controls such as `Ctrl+C`, `Esc`, arrows, and `Enter`.

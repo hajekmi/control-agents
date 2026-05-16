@@ -95,6 +95,28 @@ button.secondary {
   gap: 10px;
 }
 
+.version-badge {
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--muted);
+  display: flex;
+  flex: 0 1 auto;
+  font: 11px/1.2 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
+  justify-content: center;
+  max-width: 132px;
+  min-height: 28px;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0 7px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.version-badge[hidden] {
+  display: none;
+}
+
 .heartbeat {
   border: 1px solid #5f6973;
   border-radius: 50%;
@@ -203,6 +225,10 @@ button.secondary {
   height: 100%;
   min-width: var(--terminal-min-width);
   width: 100%;
+}
+
+.terminal-frame[hidden] {
+  display: none;
 }
 
 .empty-state {
@@ -464,6 +490,12 @@ button.secondary {
 
   .topbar-actions {
     gap: 7px;
+  }
+
+  .version-badge {
+    max-width: 86px;
+    min-height: 26px;
+    padding: 0 6px;
   }
 
   .tabs {

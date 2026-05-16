@@ -28,7 +28,7 @@ Build metadata is injected from git by default. Override it explicitly when need
 
 ```sh
 make build VERSION=2026.5.1
-bin/control-agents --version
+bin/control-agents-server --version
 ```
 
 Run real tmux/ttyd E2E checks explicitly:
@@ -47,7 +47,7 @@ Releases use calendar versioning: `YYYY.M.REVISION`.
 - `M` is the release month without a leading zero.
 - `REVISION` starts at `1` each month and increments for each release in that month.
 
-Git release tags use a `v` prefix, for example `v2026.5.1`. Runtime output omits the prefix and includes commit/build metadata through `control-agents --version`, startup logs, and `GET /api/version`.
+Git release tags use a `v` prefix, for example `v2026.5.1`. Runtime output omits the prefix and includes commit/build metadata through `control-agents-server --version`, startup logs, and `GET /api/version`.
 
 Breaking changes are called out in `CHANGELOG.md` with `BREAKING:` because compatibility is not encoded in the version number.
 
@@ -73,10 +73,10 @@ make run
 Start a mirrored SSH terminal:
 
 ```sh
-bin/client_mirror codex-main
+bin/control-agents codex-main
 ```
 
-When no name is passed, `client_mirror` uses the current directory name. For example, running it from `/home/bestie/codex/control-agents` registers the session as `control-agents`.
+When no name is passed, `control-agents` uses the current directory name. For example, running it from `/home/bestie/codex/control-agents` registers the session as `control-agents`.
 
 Open:
 
@@ -86,7 +86,7 @@ https://<vm-host-or-ip>:8080
 
 On first start the server generates a self-signed ECDSA P-256 certificate under the state directory. Browsers will show a certificate warning until you trust that certificate or provide your own TLS certificate.
 
-New sessions started with `bin/client_mirror <name>` appear as tabs automatically. Only wrapper-started sessions are registered.
+New sessions started with `bin/control-agents <name>` appear as tabs automatically. Only wrapper-started sessions are registered.
 
 ## Configuration
 
@@ -123,9 +123,9 @@ Keep `MIRROR_STATE_DIR` reasonably short. Unix domain socket paths have a small 
 
 `MIRROR_WEB_SCROLLBACK_LINES` controls browser-side terminal history retained by `ttyd`/xterm.js while the web tab is connected. It does not replay tmux output that happened before the browser connected.
 
-Because the browser is attached to tmux, mouse wheel history is primarily tmux pane history, not xterm.js scrollback. `client_mirror` enables `MIRROR_TMUX_MOUSE=on` by default so the wheel scrolls tmux history instead of sending arrow-key events to the shell prompt. Disable it with `MIRROR_TMUX_MOUSE=off` if you prefer the old tmux behavior.
+Because the browser is attached to tmux, mouse wheel history is primarily tmux pane history, not xterm.js scrollback. `control-agents` enables `MIRROR_TMUX_MOUSE=on` by default so the wheel scrolls tmux history instead of sending arrow-key events to the shell prompt. Disable it with `MIRROR_TMUX_MOUSE=off` if you prefer the old tmux behavior.
 
-`client_mirror` also sets a compact tmux status line for managed sessions. The left side shows the session label, for example `[ahoj]` when started with `bin/client_mirror ahoj`, and the right side shows the current pane directory through `#{pane_current_path}` without hostname, date, or time. Override the label with `MIRROR_APP_NAME`.
+`control-agents` also sets a compact tmux status line for managed sessions. The left side shows the session label, for example `[ahoj]` when started with `bin/control-agents ahoj`, and the right side shows the current pane directory through `#{pane_current_path}` without hostname, date, or time. Override the label with `MIRROR_APP_NAME`.
 
 ## API
 
@@ -205,7 +205,7 @@ MIRROR_BIND_ADDR=0.0.0.0
 MIRROR_PORT=8080
 ```
 
-The same target installs the wrapper as `/usr/local/bin/client_mirror`, using `sudo` for that one file when `/usr/local/bin` is not writable. Override the path with `CLIENT_MIRROR_INSTALL=/path/to/client_mirror` if needed.
+The same target installs the server as `~/.local/bin/control-agents-server` and the wrapper client as `/usr/local/bin/control-agents`, using `sudo` for the client when `/usr/local/bin` is not writable. Override paths with `SERVER_INSTALL=/path/to/control-agents-server` and `CLIENT_INSTALL=/path/to/control-agents` if needed.
 
 Enable and start:
 
@@ -257,7 +257,7 @@ podman run --rm \
 
 On hosts where SELinux relabeling breaks Unix socket access, use the appropriate local policy or mount option for that host. The wrapper still runs on the host.
 
-In the container path only the Go server belongs in the container. `client_mirror`, tmux, and `ttyd` still run on the host, and the shared state directory must be bind-mounted into the container.
+In the container path only the Go server belongs in the container. `control-agents`, tmux, and `ttyd` still run on the host, and the shared state directory must be bind-mounted into the container.
 
 ## Security
 
@@ -271,12 +271,12 @@ ssh -L 8080:127.0.0.1:8080 user@vm
 
 ## Troubleshooting
 
-- No tabs appear: start sessions through `bin/client_mirror <name>` and confirm service and wrapper use the same `MIRROR_STATE_DIR`.
+- No tabs appear: start sessions through `bin/control-agents <name>` and confirm service and wrapper use the same `MIRROR_STATE_DIR`.
 - No tabs appear but `<state-dir>/sockets/<session>.sock` exists: reinstall and restart the systemd unit so the service gets the managed `PATH` that includes Homebrew `tmux`.
 - Tab opens but terminal is unavailable: check `<state-dir>/logs/<session>.log` for `ttyd` errors.
 - Session disappears: the service removes stale registry files when the `ttyd` PID, tmux session, or Unix socket is gone.
 - Browser and SSH sizes differ: both clients attach to the same tmux session. The wrapper sets tmux `window-size` to `largest` by default so browser activity does not constantly resize a larger SSH client. Override with `MIRROR_TMUX_WINDOW_SIZE=latest`, `smallest`, or `manual` if needed.
-- Browser history is too short while the web tab is connected: increase `MIRROR_WEB_SCROLLBACK_LINES` before starting `bin/client_mirror <name>`, then reconnect the web tab.
-- Mouse wheel cycles shell command history: make sure the session was started or refreshed with `MIRROR_TMUX_MOUSE=on bin/client_mirror <name>`.
+- Browser history is too short while the web tab is connected: increase `MIRROR_WEB_SCROLLBACK_LINES` before starting `bin/control-agents <name>`, then reconnect the web tab.
+- Mouse wheel cycles shell command history: make sure the session was started or refreshed with `MIRROR_TMUX_MOUSE=on bin/control-agents <name>`.
 - Use the right-side web scrollbar to scroll tmux pane history on browsers where iframe wheel handling is unreliable.
 - On narrow mobile screens, the terminal area has horizontal scrolling so the tmux pane can keep a usable width without rotating the device.
