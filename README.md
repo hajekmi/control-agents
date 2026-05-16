@@ -73,7 +73,10 @@ The wrapper reads:
 
 - `MIRROR_STATE_DIR`, same default as the service
 - `MIRROR_DISPLAY_NAME`, optional label for the browser tab
+- `MIRROR_APP_NAME`, optional override for tmux status-left; default is the session display name
 - `MIRROR_TMUX_WINDOW_SIZE`, default `largest`
+- `MIRROR_TMUX_MOUSE`, default `on`
+- `MIRROR_WEB_SCROLLBACK_LINES`, default `10000`
 - `MIRROR_NO_ATTACH=1`, test/support mode that registers the session without attaching the current terminal
 
 The shared state directory contains:
@@ -84,20 +87,32 @@ The shared state directory contains:
 
 Keep `MIRROR_STATE_DIR` reasonably short. Unix domain socket paths have a small system limit, and the wrapper fails early when the generated socket path is too long.
 
+`MIRROR_WEB_SCROLLBACK_LINES` controls browser-side terminal history retained by `ttyd`/xterm.js while the web tab is connected. It does not replay tmux output that happened before the browser connected.
+
+Because the browser is attached to tmux, mouse wheel history is primarily tmux pane history, not xterm.js scrollback. `client_mirror` enables `MIRROR_TMUX_MOUSE=on` by default so the wheel scrolls tmux history instead of sending arrow-key events to the shell prompt. Disable it with `MIRROR_TMUX_MOUSE=off` if you prefer the old tmux behavior.
+
+`client_mirror` also sets a compact tmux status line for managed sessions. The left side shows the session label, for example `[ahoj]` when started with `bin/client_mirror ahoj`, and the right side shows the current pane directory through `#{pane_current_path}` without hostname, date, or time. Override the label with `MIRROR_APP_NAME`.
+
 ## API
 
 Unauthenticated routes:
 
 - `GET /login`: login page.
-- `POST /login`: form login. Expects `password`.
+- `POST /login`: form login. Expects `password` in an `application/x-www-form-urlencoded` body. Success sets the auth cookie and redirects to `/`; failure redirects to `/login?error=1`.
 
 Authenticated routes:
 
 - `GET /`: tabbed web UI.
 - `POST /logout`: clears the auth cookie and redirects to `/login`.
 - `GET /api/sessions`: returns active wrapper-registered sessions.
+- `GET /api/sessions/{session}/scroll`: returns tmux history scrollbar state for the active pane.
+- `POST /api/sessions/{session}/scroll`: scrolls tmux history. Body actions are `line-up`, `line-down`, `page-up`, `page-down`, `top`, `bottom`, or `set`.
 - `GET /terminal/{session}/...`: reverse proxies HTTP and WebSocket traffic to the matching `ttyd` Unix socket.
 - `GET /app.js` and `GET /styles.css`: static UI assets.
+
+The browser UI uses normal HTTP for login, static assets, and JSON API calls. `/api/*` endpoints return `401 unauthorized` when the auth cookie is missing or expired, so `app.js` can redirect the browser back to `/login` without receiving an HTML login page as an API response.
+
+Go-served HTTP responses are gzip-compressed when the client sends `Accept-Encoding: gzip`. This includes `/login`, `/app.js`, `/styles.css`, and `/api/*` JSON responses. The `/terminal/{session}/...` ttyd proxy is excluded from this middleware, including both ttyd HTTP traffic and WebSocket upgrades.
 
 Example `GET /api/sessions` response:
 
@@ -118,6 +133,17 @@ Example `GET /api/sessions` response:
 ```
 
 Successful login sets the `terminal_mirror_session` cookie. The cookie is signed with an in-memory secret, so sessions are invalidated when the server restarts.
+
+Example scroll command:
+
+```json
+{
+  "action": "set",
+  "value": 120
+}
+```
+
+`value` is the scrollbar offset from the top of tmux pane history. The bottom position returns to live output.
 
 ## systemd User Service
 
@@ -200,3 +226,7 @@ ssh -L 8080:127.0.0.1:8080 user@vm
 - Tab opens but terminal is unavailable: check `<state-dir>/logs/<session>.log` for `ttyd` errors.
 - Session disappears: the service removes stale registry files when the `ttyd` PID, tmux session, or Unix socket is gone.
 - Browser and SSH sizes differ: both clients attach to the same tmux session. The wrapper sets tmux `window-size` to `largest` by default so browser activity does not constantly resize a larger SSH client. Override with `MIRROR_TMUX_WINDOW_SIZE=latest`, `smallest`, or `manual` if needed.
+- Browser history is too short while the web tab is connected: increase `MIRROR_WEB_SCROLLBACK_LINES` before starting `bin/client_mirror <name>`, then reconnect the web tab.
+- Mouse wheel cycles shell command history: make sure the session was started or refreshed with `MIRROR_TMUX_MOUSE=on bin/client_mirror <name>`.
+- Use the right-side web scrollbar to scroll tmux pane history on browsers where iframe wheel handling is unreliable.
+- On narrow mobile screens, the terminal area has horizontal scrolling so the tmux pane can keep a usable width without rotating the device.

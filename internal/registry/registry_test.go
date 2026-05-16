@@ -35,6 +35,9 @@ func TestReadRejectsPathTraversal(t *testing.T) {
 	if _, err := store.Read("../alpha"); err == nil {
 		t.Fatal("expected invalid id error")
 	}
+	if _, err := store.Read(".."); err == nil {
+		t.Fatal("expected parent directory id error")
+	}
 }
 
 func TestListRemovesStaleSessions(t *testing.T) {

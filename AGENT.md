@@ -14,18 +14,31 @@ documentation. Keep this file focused on working rules for future agents.
   The UI is plain embedded HTML/CSS/JS.
 - Keep the UI compact and operational. This is a terminal tool, not a marketing
   page.
+- Keep the app header compact: brand, session tabs, and controls belong in the
+  same top row where practical.
 
 ## Runtime Boundaries
 
 - `server` owns auth, API, static UI, session discovery, and proxying.
 - `client_mirror` owns tmux session creation/attach, `ttyd` startup, and
   registry file creation.
+- The right-side web scrollbar is owned by the parent app, not by ttyd. It
+  calls server tmux-scroll APIs and should keep working even when iframe wheel
+  events are unreliable on mobile browsers.
 - Do not expose per-session `ttyd` TCP ports. `ttyd` must stay behind Unix
   sockets in the shared state directory.
 - Only wrapper-started sessions should appear in the UI unless the user changes
   that requirement.
 - Preserve the default tmux `window-size largest` behavior unless changing it is
   the purpose of the task.
+- Preserve the default tmux `mouse on` behavior unless changing it is the
+  purpose of the task. It lets browser wheel input scroll tmux pane history
+  instead of sending arrow-key events to the shell prompt.
+- Preserve the managed tmux status line shape: `status-left` session label,
+  `status-right` current pane path, no hostname/date/time.
+- Preserve `MIRROR_WEB_SCROLLBACK_LINES` as the browser scrollback control.
+  This is xterm.js history while the web tab is connected, not replay of past
+  tmux history.
 
 ## Security Rules
 
@@ -35,6 +48,9 @@ documentation. Keep this file focused on working rules for future agents.
 - Public HTTP/password-only mode is an accepted v1 product decision, but do not
   weaken the code further around auth, cookies, proxying, or socket exposure.
 - If adding HTTPS support later, set or document `MIRROR_COOKIE_SECURE=true`.
+- Keep gzip middleware limited to Go-served HTTP responses. Do not wrap
+  `/terminal/` proxy traffic or WebSocket upgrades unless that is explicitly
+  requested and tested.
 
 ## Tests
 
@@ -52,4 +68,3 @@ documentation. Keep this file focused on working rules for future agents.
   home and `/tmp` paths may be read-only.
 - Keep README and AGENT synchronized when renaming commands or changing runtime
   behavior.
-

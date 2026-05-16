@@ -10,9 +10,11 @@ import (
 	"time"
 
 	"terminal-mirror/internal/auth"
+	"terminal-mirror/internal/compress"
 	"terminal-mirror/internal/config"
 	"terminal-mirror/internal/proxy"
 	"terminal-mirror/internal/registry"
+	"terminal-mirror/internal/tmux"
 )
 
 //go:embed static
@@ -22,6 +24,7 @@ type Server struct {
 	cfg      config.Config
 	auth     *auth.Authenticator
 	registry *registry.Store
+	tmux     *tmux.Client
 	logger   *slog.Logger
 	mux      *http.ServeMux
 }
@@ -41,6 +44,7 @@ func New(cfg config.Config, logger *slog.Logger) (*Server, error) {
 		cfg:      cfg,
 		auth:     authenticator,
 		registry: store,
+		tmux:     tmux.NewClient(),
 		logger:   logger,
 		mux:      http.NewServeMux(),
 	}
@@ -49,13 +53,14 @@ func New(cfg config.Config, logger *slog.Logger) (*Server, error) {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	s.mux.ServeHTTP(w, r)
+	compress.Middleware(s.mux).ServeHTTP(w, r)
 }
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("/login", s.handleLogin)
 	s.mux.HandleFunc("/logout", s.handleLogout)
 	s.mux.Handle("/api/sessions", s.auth.RequireAPI(http.HandlerFunc(s.handleSessions)))
+	s.mux.Handle("/api/sessions/", s.auth.RequireAPI(http.HandlerFunc(s.handleSessionAPI)))
 	s.mux.Handle("/terminal/", s.auth.RequireAPI(proxy.New(s.registry)))
 	s.mux.Handle("/", s.auth.Require(http.HandlerFunc(s.handleStatic)))
 }
@@ -107,6 +112,45 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"sessions": sessions})
 }
 
+func (s *Server) handleSessionAPI(w http.ResponseWriter, r *http.Request) {
+	id, suffix, ok := parseSessionAPIPath(r.URL.Path)
+	if !ok || suffix != "scroll" {
+		http.NotFound(w, r)
+		return
+	}
+	session, err := s.registry.Read(id)
+	if err != nil || !s.registry.Alive(session) {
+		http.NotFound(w, r)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		state, err := s.tmux.Status(r.Context(), session.TmuxName)
+		if err != nil {
+			s.logger.Error("tmux scroll status failed", "session", id, "error", err)
+			http.Error(w, "failed to read scroll state", http.StatusBadGateway)
+			return
+		}
+		writeJSON(w, state)
+	case http.MethodPost:
+		var request tmux.ScrollRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			http.Error(w, "invalid scroll request", http.StatusBadRequest)
+			return
+		}
+		state, err := s.tmux.Scroll(r.Context(), session.TmuxName, request)
+		if err != nil {
+			s.logger.Error("tmux scroll command failed", "session", id, "action", request.Action, "error", err)
+			http.Error(w, "failed to scroll terminal", http.StatusBadGateway)
+			return
+		}
+		writeJSON(w, state)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
 func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/terminal/") {
 		http.NotFound(w, r)
@@ -124,4 +168,25 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.FileServer(http.FS(sub)).ServeHTTP(w, r)
+}
+
+func parseSessionAPIPath(path string) (string, string, bool) {
+	trimmed := strings.TrimPrefix(path, "/api/sessions/")
+	if trimmed == path {
+		return "", "", false
+	}
+	parts := strings.Split(strings.Trim(trimmed, "/"), "/")
+	if len(parts) != 2 || !registry.ValidID(parts[0]) {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
+}
+
+func writeJSON(w http.ResponseWriter, payload any) {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		panic(err)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(data)
 }

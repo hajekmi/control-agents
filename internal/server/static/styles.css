@@ -7,6 +7,8 @@
   --muted: #a7afb8;
   --accent: #4db6ac;
   --danger: #ff7b72;
+  --history-scrollbar-width: 28px;
+  --terminal-min-width: 900px;
 }
 
 * {
@@ -18,12 +20,19 @@ body {
   width: 100%;
   height: 100%;
   margin: 0;
+  overflow: hidden;
 }
 
 body {
   background: var(--background);
   color: var(--text);
+  display: flex;
+  flex-direction: column;
   font: 14px/1.4 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  height: 100vh;
+  height: 100svh;
+  height: 100dvh;
+  min-height: 0;
 }
 
 button,
@@ -57,10 +66,12 @@ button.secondary {
 .topbar {
   align-items: center;
   border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
   display: flex;
-  height: 68px;
+  gap: 12px;
   justify-content: space-between;
-  padding: 0 16px;
+  min-height: 50px;
+  padding: max(7px, env(safe-area-inset-top)) calc(10px + env(safe-area-inset-right)) 7px calc(10px + env(safe-area-inset-left));
 }
 
 .topbar h1,
@@ -70,24 +81,42 @@ button.secondary {
   margin: 0;
 }
 
-.topbar p {
+.brand-row {
+  align-items: center;
+  display: flex;
+  flex: 1 1 auto;
+  gap: 10px;
+  min-width: 0;
+}
+
+.status {
   color: var(--muted);
-  margin: 2px 0 0;
+  flex: 0 0 auto;
+  font-size: 12px;
+  min-height: 24px;
+  padding: 4px 10px;
 }
 
 .workspace {
-  display: grid;
-  grid-template-rows: 44px minmax(0, 1fr);
-  height: calc(100% - 68px);
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .tabs {
   align-items: center;
-  border-bottom: 1px solid var(--border);
   display: flex;
+  flex: 1 1 auto;
   gap: 8px;
+  min-height: 34px;
+  min-width: 0;
   overflow-x: auto;
-  padding: 6px 10px;
+  overflow-y: hidden;
+  padding: 0;
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
 }
 
 .tabs button {
@@ -99,15 +128,29 @@ button.secondary {
 }
 
 .terminal-pane {
+  flex: 1 1 auto;
   min-height: 0;
+  overflow: hidden;
   position: relative;
+  width: 100%;
+}
+
+.terminal-strip {
+  bottom: env(safe-area-inset-bottom);
+  left: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  position: absolute;
+  right: var(--history-scrollbar-width);
+  top: 0;
+  -webkit-overflow-scrolling: touch;
 }
 
 .terminal-frame {
   border: 0;
+  display: block;
   height: 100%;
-  inset: 0;
-  position: absolute;
+  min-width: var(--terminal-min-width);
   width: 100%;
 }
 
@@ -118,16 +161,80 @@ button.secondary {
   place-items: center;
 }
 
+.history-scrollbar {
+  align-items: center;
+  background: #111315;
+  border-left: 1px solid var(--border);
+  bottom: env(safe-area-inset-bottom);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 3px;
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: var(--history-scrollbar-width);
+  z-index: 5;
+}
+
+.history-scrollbar[hidden] {
+  display: none;
+}
+
+.scroll-button {
+  align-items: center;
+  border-radius: 4px;
+  display: flex;
+  flex: 0 0 22px;
+  justify-content: center;
+  min-height: 22px;
+  padding: 0;
+  width: 20px;
+}
+
+.history-track {
+  background: #0b0d0e;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  cursor: pointer;
+  flex: 1 1 auto;
+  min-height: 52px;
+  position: relative;
+  touch-action: none;
+  width: 18px;
+}
+
+.history-track:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.history-thumb {
+  background: #68727d;
+  border: 1px solid #87919c;
+  border-radius: 5px;
+  left: 2px;
+  min-height: 28px;
+  position: absolute;
+  right: 2px;
+  top: 0;
+}
+
+.history-scrollbar.disabled {
+  opacity: 0.55;
+}
+
 .login-page {
   display: grid;
   place-items: center;
+  padding: calc(16px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
 }
 
 .login-panel {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--panel);
-  width: min(360px, calc(100vw - 32px));
+  width: min(360px, 100%);
   padding: 24px;
 }
 
@@ -151,3 +258,56 @@ button.secondary {
   margin: 12px 0 0;
 }
 
+@media (max-width: 640px) {
+  body {
+    font-size: 13px;
+  }
+
+  button {
+    min-height: 34px;
+    padding: 0 10px;
+  }
+
+  .topbar {
+    gap: 8px;
+    min-height: 44px;
+    padding: max(5px, env(safe-area-inset-top)) calc(8px + env(safe-area-inset-right)) 5px calc(8px + env(safe-area-inset-left));
+  }
+
+  .topbar h1,
+  .login-panel h1 {
+    font-size: 15px;
+  }
+
+  .brand-row {
+    gap: 7px;
+  }
+
+  .status {
+    min-height: 20px;
+    padding: 2px 8px;
+  }
+
+  .tabs {
+    gap: 6px;
+    min-height: 32px;
+  }
+
+  .tabs button {
+    max-width: 130px;
+    min-height: 30px;
+    padding: 0 8px;
+  }
+
+  .topbar form {
+    display: none;
+  }
+
+  .terminal-frame {
+    min-width: min(var(--terminal-min-width), 240vw);
+  }
+
+  .login-panel {
+    padding: 20px;
+  }
+}

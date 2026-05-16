@@ -164,7 +164,7 @@ func (session Session) Validate() error {
 }
 
 func ValidID(id string) bool {
-	return sessionIDPattern.MatchString(id)
+	return id != "." && id != ".." && sessionIDPattern.MatchString(id)
 }
 
 func processAlive(pid int) bool {

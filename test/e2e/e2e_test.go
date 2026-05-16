@@ -55,13 +55,22 @@ func TestRealTmuxAndTtydSessionAppears(t *testing.T) {
 	waitForHTTP(t, ctx, fmt.Sprintf("http://127.0.0.1:%d/login", port))
 
 	wrapper := exec.CommandContext(ctx, "../../bin/client_mirror", sessionName)
-	wrapper.Env = append(os.Environ(), "MIRROR_STATE_DIR="+stateDir, "MIRROR_NO_ATTACH=1")
+	wrapper.Env = append(os.Environ(),
+		"MIRROR_STATE_DIR="+stateDir,
+		"MIRROR_NO_ATTACH=1",
+		"MIRROR_WEB_SCROLLBACK_LINES=2345",
+	)
 	if output, err := wrapper.CombinedOutput(); err != nil {
 		t.Fatalf("wrapper failed: %v\n%s", err, output)
 	}
 
 	waitForSession(t, ctx, port, sessionName)
 	assertTmuxWindowSize(t, sessionName, "largest")
+	assertTmuxMouse(t, sessionName, "on")
+	assertTmuxOption(t, sessionName, "status-left-length", "80")
+	assertTmuxOption(t, sessionName, "status-left", "["+sessionName+"] ")
+	assertTmuxOption(t, sessionName, "status-right", "#{pane_current_path}")
+	assertTtydCommandLineContains(t, stateDir, sessionName, "scrollback", "2345")
 
 	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/terminal/%s/", port, sessionName))
 	if err != nil {
@@ -86,21 +95,65 @@ func assertTmuxWindowSize(t *testing.T, sessionName, want string) {
 	}
 }
 
+func assertTmuxMouse(t *testing.T, sessionName, want string) {
+	t.Helper()
+	assertTmuxOption(t, sessionName, "mouse", want)
+}
+
+func assertTmuxOption(t *testing.T, sessionName, option, want string) {
+	t.Helper()
+	cmd := exec.Command("tmux", "show-options", "-v", "-t", sessionName, option)
+	output, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.TrimRight(string(output), "\r\n")
+	if got != want {
+		t.Fatalf("tmux %s = %q, want %q", option, got, want)
+	}
+}
+
 func killRegisteredTtyd(stateDir, sessionName string) {
+	pid := readRegisteredTtydPID(stateDir, sessionName)
+	if pid <= 0 {
+		return
+	}
+	process, err := os.FindProcess(pid)
+	if err == nil {
+		_ = process.Kill()
+	}
+}
+
+func assertTtydCommandLineContains(t *testing.T, stateDir, sessionName string, wantParts ...string) {
+	t.Helper()
+	pid := readRegisteredTtydPID(stateDir, sessionName)
+	if pid <= 0 {
+		t.Fatalf("missing registered ttyd pid for %s", sessionName)
+	}
+	data, err := os.ReadFile(filepath.Join("/proc", fmt.Sprint(pid), "cmdline"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmdline := strings.ReplaceAll(string(data), "\x00", " ")
+	for _, want := range wantParts {
+		if !strings.Contains(cmdline, want) {
+			t.Fatalf("ttyd cmdline %q does not contain %q", cmdline, want)
+		}
+	}
+}
+
+func readRegisteredTtydPID(stateDir, sessionName string) int {
 	data, err := os.ReadFile(filepath.Join(stateDir, "sessions", sessionName+".json"))
 	if err != nil {
-		return
+		return 0
 	}
 	var session struct {
 		PID int `json:"pid"`
 	}
 	if json.Unmarshal(data, &session) != nil || session.PID <= 0 {
-		return
+		return 0
 	}
-	process, err := os.FindProcess(session.PID)
-	if err == nil {
-		_ = process.Kill()
-	}
+	return session.PID
 }
 
 func requireCommand(t *testing.T, name string) {

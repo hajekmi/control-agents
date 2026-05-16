@@ -75,6 +75,17 @@ func TestRootAfterLoginReturnsIndexWithoutRedirect(t *testing.T) {
 	}
 }
 
+func TestParseSessionAPIPath(t *testing.T) {
+	id, suffix, ok := parseSessionAPIPath("/api/sessions/main-1/scroll")
+	if !ok || id != "main-1" || suffix != "scroll" {
+		t.Fatalf("id=%q suffix=%q ok=%v", id, suffix, ok)
+	}
+
+	if _, _, ok := parseSessionAPIPath("/api/sessions/../scroll"); ok {
+		t.Fatal("path traversal id was accepted")
+	}
+}
+
 func newTestServer(t *testing.T) http.Handler {
 	t.Helper()
 	cfg := config.Config{

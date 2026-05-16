@@ -2,27 +2,34 @@
 <html lang="en">
   <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Terminal Mirror</title>
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
     <header class="topbar">
-      <div>
-        <h1>Terminal Mirror</h1>
-        <p id="status">Loading sessions...</p>
+      <div class="brand-row">
+        <h1>Control Agents</h1>
+        <nav id="tabs" class="tabs" aria-label="Terminal sessions"></nav>
       </div>
       <form method="post" action="/logout">
         <button type="submit" class="secondary">Sign out</button>
       </form>
     </header>
     <main class="workspace">
-      <nav id="tabs" class="tabs" aria-label="Terminal sessions"></nav>
+      <div id="status" class="status" aria-live="polite">Loading sessions...</div>
       <section id="terminal-pane" class="terminal-pane">
         <div id="empty-state" class="empty-state">No mirrored terminals are registered.</div>
+        <div id="terminal-strip" class="terminal-strip"></div>
+        <div id="history-scrollbar" class="history-scrollbar" aria-label="Terminal history scrollbar" hidden>
+          <button type="button" id="scroll-top" class="scroll-button" title="History top" aria-label="History top">^</button>
+          <div id="history-track" class="history-track" role="scrollbar" aria-orientation="vertical" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" tabindex="0">
+            <div id="history-thumb" class="history-thumb"></div>
+          </div>
+          <button type="button" id="scroll-bottom" class="scroll-button" title="Live bottom" aria-label="Live bottom">v</button>
+        </div>
       </section>
     </main>
     <script src="/app.js"></script>
   </body>
 </html>
-

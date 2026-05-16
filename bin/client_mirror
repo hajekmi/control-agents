@@ -4,13 +4,29 @@ set -euo pipefail
 STATE_DIR="${MIRROR_STATE_DIR:-"$HOME/.local/state/terminal-mirror"}"
 SESSION_NAME="${1:-"mirror-$(date +%Y%m%d-%H%M%S)"}"
 DISPLAY_NAME="${MIRROR_DISPLAY_NAME:-$SESSION_NAME}"
+APP_NAME="${MIRROR_APP_NAME:-$DISPLAY_NAME}"
 TMUX_WINDOW_SIZE="${MIRROR_TMUX_WINDOW_SIZE:-largest}"
+TMUX_MOUSE="${MIRROR_TMUX_MOUSE:-on}"
+WEB_SCROLLBACK_LINES="${MIRROR_WEB_SCROLLBACK_LINES:-10000}"
 SESSION_ID="$(printf '%s' "$SESSION_NAME" | tr -c 'A-Za-z0-9._-' '-' | sed -E 's/^-+|-+$//g')"
 
 if [[ -z "$SESSION_ID" ]]; then
   echo "session id is empty after sanitizing session name" >&2
   exit 2
 fi
+
+if ! [[ "$WEB_SCROLLBACK_LINES" =~ ^[0-9]+$ ]]; then
+  echo "MIRROR_WEB_SCROLLBACK_LINES must be a non-negative integer" >&2
+  exit 2
+fi
+
+case "$TMUX_MOUSE" in
+  on|off) ;;
+  *)
+    echo "MIRROR_TMUX_MOUSE must be either on or off" >&2
+    exit 2
+    ;;
+esac
 
 SOCKET_DIR="$STATE_DIR/sockets"
 SESSION_DIR="$STATE_DIR/sessions"
@@ -42,6 +58,10 @@ if ! tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
   tmux new-session -d -s "$SESSION_NAME" -c "$PWD"
 fi
 tmux set-option -w -t "$SESSION_NAME:" window-size "$TMUX_WINDOW_SIZE" >/dev/null
+tmux set-option -t "$SESSION_NAME" mouse "$TMUX_MOUSE" >/dev/null
+tmux set-option -t "$SESSION_NAME" status-left-length 80 >/dev/null
+tmux set-option -t "$SESSION_NAME" status-left "[$APP_NAME] " >/dev/null
+tmux set-option -t "$SESSION_NAME" status-right "#{pane_current_path}" >/dev/null
 
 needs_ttyd=1
 if [[ -f "$SESSION_FILE" ]]; then
@@ -53,7 +73,7 @@ fi
 
 if [[ "$needs_ttyd" -eq 1 ]]; then
   rm -f "$SOCKET_PATH"
-  nohup ttyd -W -i "$SOCKET_PATH" -b "/terminal/$SESSION_ID" tmux attach-session -t "$SESSION_NAME" >"$LOG_FILE" 2>&1 &
+  nohup ttyd -W -i "$SOCKET_PATH" -b "/terminal/$SESSION_ID" -t "scrollback=$WEB_SCROLLBACK_LINES" tmux attach-session -t "$SESSION_NAME" >"$LOG_FILE" 2>&1 &
   ttyd_pid="$!"
   for _ in $(seq 1 50); do
     [[ -S "$SOCKET_PATH" ]] && break
