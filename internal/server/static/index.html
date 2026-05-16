@@ -3,22 +3,24 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-    <title>Terminal Mirror</title>
+    <title>Control Agents</title>
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
     <header class="topbar">
-      <div class="brand-row">
-        <h1>Control Agents</h1>
-        <nav id="tabs" class="tabs" aria-label="Terminal sessions"></nav>
-      </div>
+      <nav id="tabs" class="tabs" aria-label="Terminal sessions"></nav>
       <div class="topbar-actions">
-        <button type="button" id="keys-toggle" class="secondary" aria-controls="key-panel" aria-expanded="false">Keys</button>
         <span id="version-badge" class="version-badge" hidden></span>
         <span id="heartbeat" class="heartbeat" data-state="checking" role="status" aria-label="Checking server" title="Checking server"></span>
-        <form method="post" action="/logout">
-          <button type="submit" class="secondary">Sign out</button>
-        </form>
+        <div id="actions-menu" class="actions-menu">
+          <button type="button" id="actions-toggle" class="secondary menu-button" aria-controls="actions-popover" aria-expanded="false">Menu</button>
+          <div id="actions-popover" class="actions-popover" hidden>
+            <button type="button" id="keys-toggle" class="action-menu-item" aria-controls="key-panel" aria-expanded="false">Keys</button>
+            <form method="post" action="/logout">
+              <button type="submit" class="action-menu-item">Sign out</button>
+            </form>
+          </div>
+        </div>
       </div>
     </header>
     <main class="workspace">

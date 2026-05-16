@@ -99,8 +99,9 @@ The Go service reads:
 - `MIRROR_STATE_DIR`, default `$HOME/.local/state/terminal-mirror`
 - `MIRROR_TLS_CERT_FILE`, default `$MIRROR_STATE_DIR/certs/server.crt`
 - `MIRROR_TLS_KEY_FILE`, default `$MIRROR_STATE_DIR/certs/server.key`
+- `MIRROR_AUTH_SECRET_FILE`, default `$MIRROR_STATE_DIR/auth/session.key`
 - `MIRROR_COOKIE_SECURE`, default `true` for HTTPS
-- `MIRROR_COOKIE_TTL_SECONDS`, default `43200`
+- `MIRROR_COOKIE_TTL_SECONDS`, default `172800`
 
 The wrapper reads:
 
@@ -117,6 +118,7 @@ The shared state directory contains:
 - `sessions/*.json` registry files
 - `sockets/*.sock` private `ttyd` Unix sockets
 - `logs/*.log` per-session `ttyd` logs
+- `auth/session.key` persistent cookie signing secret
 - `certs/server.crt` and `certs/server.key` when the default generated TLS files are used
 
 Keep `MIRROR_STATE_DIR` reasonably short. Unix domain socket paths have a small system limit, and the wrapper fails early when the generated socket path is too long.
@@ -168,7 +170,7 @@ Example `GET /api/sessions` response:
 }
 ```
 
-Successful login sets the `terminal_mirror_session` cookie. The cookie is signed with an in-memory secret, so sessions are invalidated when the server restarts.
+Successful login sets the `terminal_mirror_session` cookie. The cookie is signed with a persistent secret stored under the state directory, so sessions remain valid across server restarts until `MIRROR_COOKIE_TTL_SECONDS` expires or the auth secret file is removed.
 
 Example scroll command:
 

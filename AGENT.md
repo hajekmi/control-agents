@@ -44,8 +44,10 @@ documentation. Keep this file focused on working rules for future agents.
 ## Security Rules
 
 - Do not log passwords, auth cookies, terminal input, or terminal output.
+- Do not log or expose the persistent auth secret stored in the state
+  directory.
 - Keep state directory permissions private: directories `0700`, registry files
-  `0600`.
+  `0600`, auth secret `0600`.
 - HTTPS is the default server mode. Keep `MIRROR_COOKIE_SECURE=true` as the
   default unless the user explicitly needs an HTTP-only test/development path.
 - Keep gzip middleware limited to Go-served HTTP responses. Do not wrap
@@ -59,6 +61,19 @@ documentation. Keep this file focused on working rules for future agents.
   startup, registry compatibility, or proxy routing.
 - The Makefile intentionally sets workspace-local Go caches, `TMUX_TMPDIR`, cgo
   off, and `GOFLAGS=-buildvcs=false` for restricted execution environments.
+
+## Versioning
+
+- Releases use calendar versioning: `YYYY.M.REVISION`.
+- `YYYY` is the release year, `M` is the release month without a leading zero,
+  and `REVISION` starts at `1` each month and increments for each release in
+  that month.
+- Git release tags use a `v` prefix, for example `v2026.5.2`.
+- Runtime output omits the prefix, for example `2026.5.2`.
+- Breaking changes are called out in `CHANGELOG.md` with `BREAKING:` because
+  compatibility is not encoded in the version number.
+- Before tagging a release, move relevant entries from `Unreleased` in
+  `CHANGELOG.md` into a dated release section.
 
 ## Repository Notes
 

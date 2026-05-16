@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -37,7 +38,15 @@ func New(cfg config.Config, logger *slog.Logger) (*Server, error) {
 		return nil, err
 	}
 
-	authenticator, err := auth.New(cfg.Password, time.Duration(cfg.CookieTTL)*time.Second, cfg.CookieSecure)
+	authSecretFile := cfg.AuthSecretFile
+	if authSecretFile == "" {
+		authSecretFile = filepath.Join(cfg.StateDir, "auth", "session.key")
+	}
+	authSecret, err := auth.LoadOrCreateSecret(authSecretFile)
+	if err != nil {
+		return nil, err
+	}
+	authenticator, err := auth.NewWithSecret(cfg.Password, time.Duration(cfg.CookieTTL)*time.Second, cfg.CookieSecure, authSecret)
 	if err != nil {
 		return nil, err
 	}

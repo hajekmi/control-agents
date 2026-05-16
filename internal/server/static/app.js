@@ -8,6 +8,9 @@
   const historyThumb = document.getElementById("history-thumb");
   const scrollTopButton = document.getElementById("scroll-top");
   const scrollBottomButton = document.getElementById("scroll-bottom");
+  const actionsMenu = document.getElementById("actions-menu");
+  const actionsToggle = document.getElementById("actions-toggle");
+  const actionsPopover = document.getElementById("actions-popover");
   const keysToggle = document.getElementById("keys-toggle");
   const versionBadge = document.getElementById("version-badge");
   const keyPanel = document.getElementById("key-panel");
@@ -284,6 +287,11 @@
     }
   }
 
+  function setActionsMenuOpen(open) {
+    actionsPopover.hidden = !open;
+    actionsToggle.setAttribute("aria-expanded", String(open));
+  }
+
   async function refreshScrollState() {
     if (dragging) return;
     const next = await fetchScrollState();
@@ -387,8 +395,21 @@
 
   scrollTopButton.addEventListener("click", () => postScroll("top"));
   scrollBottomButton.addEventListener("click", () => postScroll("bottom"));
-  keysToggle.addEventListener("click", () => setKeyPanelOpen(keyPanel.hidden));
+  actionsToggle.addEventListener("click", () => setActionsMenuOpen(actionsPopover.hidden));
+  keysToggle.addEventListener("click", () => {
+    setKeyPanelOpen(true);
+    setActionsMenuOpen(false);
+  });
   keysClose.addEventListener("click", () => setKeyPanelOpen(false));
+  document.addEventListener("click", (event) => {
+    if (actionsPopover.hidden || actionsMenu.contains(event.target)) return;
+    setActionsMenuOpen(false);
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    setActionsMenuOpen(false);
+    setKeyPanelOpen(false);
+  });
 
   renderKeyButtons();
   refreshVersion();

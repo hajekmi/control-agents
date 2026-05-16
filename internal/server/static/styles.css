@@ -92,7 +92,9 @@ button.secondary {
   align-items: center;
   display: flex;
   flex: 0 0 auto;
-  gap: 10px;
+  gap: 8px;
+  min-width: 0;
+  position: relative;
 }
 
 .version-badge {
@@ -115,6 +117,46 @@ button.secondary {
 
 .version-badge[hidden] {
   display: none;
+}
+
+.actions-menu {
+  flex: 0 0 auto;
+  position: relative;
+}
+
+.menu-button {
+  min-width: 58px;
+}
+
+.actions-popover {
+  background: #202326;
+  border: 1px solid #3d444b;
+  border-radius: 7px;
+  box-shadow: 0 12px 30px rgb(0 0 0 / 0.38);
+  display: grid;
+  gap: 4px;
+  padding: 5px;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 7px);
+  width: 132px;
+  z-index: 20;
+}
+
+.actions-popover[hidden] {
+  display: none;
+}
+
+.actions-popover form {
+  margin: 0;
+}
+
+.action-menu-item {
+  border-radius: 5px;
+  min-height: 34px;
+  padding: 0 9px;
+  text-align: left;
+  width: 100%;
 }
 
 .heartbeat {
@@ -489,13 +531,23 @@ button.secondary {
   }
 
   .topbar-actions {
-    gap: 7px;
+    gap: 6px;
   }
 
   .version-badge {
-    max-width: 86px;
+    max-width: 78px;
     min-height: 26px;
     padding: 0 6px;
+  }
+
+  .menu-button {
+    min-width: 50px;
+    padding: 0 8px;
+  }
+
+  .actions-popover {
+    top: calc(100% + 6px);
+    width: 124px;
   }
 
   .tabs {

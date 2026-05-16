@@ -49,6 +49,12 @@ func TestLoadFromEnvReadsPasswordFile(t *testing.T) {
 	if cfg.TLSKeyFile != filepath.Join(cfg.StateDir, "certs", "server.key") {
 		t.Fatalf("TLS key file = %q", cfg.TLSKeyFile)
 	}
+	if cfg.AuthSecretFile != filepath.Join(cfg.StateDir, "auth", "session.key") {
+		t.Fatalf("auth secret file = %q", cfg.AuthSecretFile)
+	}
+	if cfg.CookieTTL != 48*60*60 {
+		t.Fatalf("cookie ttl = %d, want 172800", cfg.CookieTTL)
+	}
 }
 
 func TestLoadFromEnvReadsTLSPathOverrides(t *testing.T) {
@@ -67,6 +73,21 @@ func TestLoadFromEnvReadsTLSPathOverrides(t *testing.T) {
 	}
 	if cfg.TLSKeyFile != filepath.Join(dir, "custom.key") {
 		t.Fatalf("TLS key file = %q", cfg.TLSKeyFile)
+	}
+}
+
+func TestLoadFromEnvReadsAuthSecretPathOverride(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("MIRROR_PASSWORD", "secret")
+	t.Setenv("MIRROR_STATE_DIR", filepath.Join(dir, "state"))
+	t.Setenv("MIRROR_AUTH_SECRET_FILE", filepath.Join(dir, "custom-session.key"))
+
+	cfg, err := LoadFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AuthSecretFile != filepath.Join(dir, "custom-session.key") {
+		t.Fatalf("auth secret file = %q", cfg.AuthSecretFile)
 	}
 }
 

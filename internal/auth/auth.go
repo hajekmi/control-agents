@@ -9,12 +9,15 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 )
 
 const CookieName = "terminal_mirror_session"
+const SecretSize = 32
 
 type Authenticator struct {
 	passwordHash []byte
@@ -33,9 +36,9 @@ func New(password string, ttl time.Duration, secureCookie bool) (*Authenticator,
 	}
 
 	passwordHash := sha256.Sum256([]byte(password))
-	secret := make([]byte, 32)
-	if _, err := rand.Read(secret); err != nil {
-		return nil, fmt.Errorf("generate auth secret: %w", err)
+	secret, err := randomSecret()
+	if err != nil {
+		return nil, err
 	}
 
 	return &Authenticator{
@@ -45,6 +48,85 @@ func New(password string, ttl time.Duration, secureCookie bool) (*Authenticator,
 		secureCookie: secureCookie,
 		now:          time.Now,
 	}, nil
+}
+
+func NewWithSecret(password string, ttl time.Duration, secureCookie bool, secret []byte) (*Authenticator, error) {
+	if password == "" {
+		return nil, errors.New("password cannot be empty")
+	}
+	if ttl <= 0 {
+		return nil, errors.New("ttl must be positive")
+	}
+	if len(secret) != SecretSize {
+		return nil, fmt.Errorf("auth secret must be %d bytes", SecretSize)
+	}
+
+	passwordHash := sha256.Sum256([]byte(password))
+	secretCopy := append([]byte(nil), secret...)
+
+	return &Authenticator{
+		passwordHash: passwordHash[:],
+		secret:       secretCopy,
+		ttl:          ttl,
+		secureCookie: secureCookie,
+		now:          time.Now,
+	}, nil
+}
+
+func LoadOrCreateSecret(path string) ([]byte, error) {
+	data, err := os.ReadFile(path)
+	if err == nil {
+		return parseSecret(data)
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("read auth secret: %w", err)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, fmt.Errorf("create auth secret dir: %w", err)
+	}
+
+	secret, err := randomSecret()
+	if err != nil {
+		return nil, err
+	}
+	encoded := base64.RawURLEncoding.EncodeToString(secret) + "\n"
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("read auth secret: %w", err)
+		}
+		return parseSecret(data)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("create auth secret: %w", err)
+	}
+	defer file.Close()
+
+	if _, err := file.WriteString(encoded); err != nil {
+		return nil, fmt.Errorf("write auth secret: %w", err)
+	}
+	return secret, nil
+}
+
+func randomSecret() ([]byte, error) {
+	secret := make([]byte, SecretSize)
+	if _, err := rand.Read(secret); err != nil {
+		return nil, fmt.Errorf("generate auth secret: %w", err)
+	}
+	return secret, nil
+}
+
+func parseSecret(data []byte) ([]byte, error) {
+	secret, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(string(data)))
+	if err != nil {
+		return nil, fmt.Errorf("decode auth secret: %w", err)
+	}
+	if len(secret) != SecretSize {
+		return nil, fmt.Errorf("auth secret must be %d bytes", SecretSize)
+	}
+	return secret, nil
 }
 
 func (a *Authenticator) CheckPassword(password string) bool {

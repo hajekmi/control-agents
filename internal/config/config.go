@@ -13,18 +13,19 @@ import (
 const (
 	defaultBindAddr  = "0.0.0.0"
 	defaultPort      = 8080
-	defaultCookieTTL = 12 * 60 * 60
+	defaultCookieTTL = 48 * 60 * 60
 )
 
 type Config struct {
-	BindAddr     string
-	Port         int
-	Password     string
-	StateDir     string
-	TLSCertFile  string
-	TLSKeyFile   string
-	CookieSecure bool
-	CookieTTL    int
+	BindAddr       string
+	Port           int
+	Password       string
+	StateDir       string
+	TLSCertFile    string
+	TLSKeyFile     string
+	AuthSecretFile string
+	CookieSecure   bool
+	CookieTTL      int
 }
 
 func LoadFromEnv() (Config, error) {
@@ -41,6 +42,7 @@ func LoadFromEnv() (Config, error) {
 	}
 	cfg.TLSCertFile = getEnv("MIRROR_TLS_CERT_FILE", filepath.Join(cfg.StateDir, "certs", "server.crt"))
 	cfg.TLSKeyFile = getEnv("MIRROR_TLS_KEY_FILE", filepath.Join(cfg.StateDir, "certs", "server.key"))
+	cfg.AuthSecretFile = getEnv("MIRROR_AUTH_SECRET_FILE", filepath.Join(cfg.StateDir, "auth", "session.key"))
 
 	if value := os.Getenv("MIRROR_PORT"); value != "" {
 		port, err := strconv.Atoi(value)
@@ -90,6 +92,9 @@ func (c Config) Validate() error {
 	}
 	if c.TLSKeyFile == "" {
 		return errors.New("MIRROR_TLS_KEY_FILE cannot be empty")
+	}
+	if c.AuthSecretFile == "" {
+		return errors.New("MIRROR_AUTH_SECRET_FILE cannot be empty")
 	}
 	if c.CookieTTL <= 0 {
 		return errors.New("MIRROR_COOKIE_TTL_SECONDS must be positive")
