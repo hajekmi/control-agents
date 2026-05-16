@@ -8,7 +8,36 @@
   const historyThumb = document.getElementById("history-thumb");
   const scrollTopButton = document.getElementById("scroll-top");
   const scrollBottomButton = document.getElementById("scroll-bottom");
+  const keysToggle = document.getElementById("keys-toggle");
+  const keyPanel = document.getElementById("key-panel");
+  const keysClose = document.getElementById("keys-close");
+  const keyGrid = document.getElementById("key-grid");
   const frames = new Map();
+  const specialKeys = [
+    { key: "ctrl-c", label: "Ctrl+C", title: "Interrupt", urgent: true },
+    { key: "ctrl-d", label: "Ctrl+D", title: "EOF" },
+    { key: "ctrl-z", label: "Ctrl+Z", title: "Suspend" },
+    { key: "ctrl-l", label: "Ctrl+L", title: "Clear screen" },
+    { key: "escape", label: "Esc", title: "Escape" },
+    { key: "tab", label: "Tab", title: "Tab" },
+    { key: "enter", label: "Enter", title: "Enter" },
+    { key: "backspace", label: "Backspace", title: "Backspace" },
+    { key: "up", label: "Up", title: "Arrow up" },
+    { key: "down", label: "Down", title: "Arrow down" },
+    { key: "left", label: "Left", title: "Arrow left" },
+    { key: "right", label: "Right", title: "Arrow right" },
+    { key: "home", label: "Home", title: "Home" },
+    { key: "end", label: "End", title: "End" },
+    { key: "page-up", label: "PgUp", title: "Page up" },
+    { key: "page-down", label: "PgDn", title: "Page down" },
+    { key: "ctrl-a", label: "Ctrl+A", title: "Line start" },
+    { key: "ctrl-e", label: "Ctrl+E", title: "Line end" },
+    { key: "ctrl-u", label: "Ctrl+U", title: "Kill before cursor" },
+    { key: "ctrl-k", label: "Ctrl+K", title: "Kill after cursor" },
+    { key: "ctrl-r", label: "Ctrl+R", title: "Reverse search" },
+    { key: "ctrl-w", label: "Ctrl+W", title: "Delete word" },
+    { key: "delete", label: "Delete", title: "Delete" }
+  ];
   let activeId = "";
   let scrollState = null;
   let dragging = false;
@@ -52,6 +81,7 @@
     emptyState.hidden = frames.size !== 0;
     requestTerminalResize();
     refreshScrollState();
+    updateKeyButtons(false);
   }
 
   function render(sessions) {
@@ -91,6 +121,7 @@
       activate(activeId);
     } else {
       emptyState.hidden = false;
+      updateKeyButtons(false);
     }
   }
 
@@ -142,6 +173,73 @@
     const next = await response.json();
     updateScrollUI(next);
     return next;
+  }
+
+  async function postKey(key) {
+    if (!activeId) return;
+    updateKeyButtons(true);
+    try {
+      const response = await fetch(`/api/sessions/${encodeURIComponent(activeId)}/keys`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ key })
+      });
+      if (response.status === 401) {
+        window.location.href = "/login";
+        return;
+      }
+      if (!response.ok) {
+        throw new Error(`key request failed: ${response.status}`);
+      }
+      focusActiveTerminal();
+      refreshScrollState();
+    } catch (error) {
+      console.error(error);
+    } finally {
+      updateKeyButtons(false);
+    }
+  }
+
+  function focusActiveTerminal() {
+    const frame = frames.get(activeId);
+    if (!frame) return;
+    frame.focus();
+    try {
+      frame.contentWindow.focus();
+    } catch (error) {
+      // The key command was already sent server-side; focusing is best effort.
+    }
+  }
+
+  function renderKeyButtons() {
+    keyGrid.replaceChildren();
+    for (const key of specialKeys) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = key.urgent ? "key-button urgent" : "key-button";
+      button.dataset.key = key.key;
+      button.textContent = key.label;
+      button.title = key.title;
+      button.addEventListener("click", () => postKey(key.key));
+      keyGrid.appendChild(button);
+    }
+    updateKeyButtons(false);
+  }
+
+  function updateKeyButtons(sending) {
+    const disabled = sending || !activeId;
+    for (const button of keyGrid.querySelectorAll("button")) {
+      button.disabled = disabled;
+    }
+  }
+
+  function setKeyPanelOpen(open) {
+    keyPanel.hidden = !open;
+    keysToggle.setAttribute("aria-expanded", String(open));
+    if (open) {
+      updateKeyButtons(false);
+    }
   }
 
   async function refreshScrollState() {
@@ -247,7 +345,10 @@
 
   scrollTopButton.addEventListener("click", () => postScroll("top"));
   scrollBottomButton.addEventListener("click", () => postScroll("bottom"));
+  keysToggle.addEventListener("click", () => setKeyPanelOpen(keyPanel.hidden));
+  keysClose.addEventListener("click", () => setKeyPanelOpen(false));
 
+  renderKeyButtons();
   refresh();
   window.setInterval(refresh, 3000);
   window.setInterval(refreshScrollState, 1500);

@@ -13,6 +13,7 @@
         <nav id="tabs" class="tabs" aria-label="Terminal sessions"></nav>
       </div>
       <div class="topbar-actions">
+        <button type="button" id="keys-toggle" class="secondary" aria-controls="key-panel" aria-expanded="false">Keys</button>
         <span id="heartbeat" class="heartbeat" data-state="checking" role="status" aria-label="Checking server" title="Checking server"></span>
         <form method="post" action="/logout">
           <button type="submit" class="secondary">Sign out</button>
@@ -30,6 +31,13 @@
           </div>
           <button type="button" id="scroll-bottom" class="scroll-button" title="Live bottom" aria-label="Live bottom">v</button>
         </div>
+        <aside id="key-panel" class="key-panel" aria-label="Special keys" hidden>
+          <div class="key-panel-header">
+            <h2>Special keys</h2>
+            <button type="button" id="keys-close" class="key-panel-close" title="Close special keys" aria-label="Close special keys">x</button>
+          </div>
+          <div id="key-grid" class="key-grid"></div>
+        </aside>
       </section>
     </main>
     <script src="/app.js"></script>

@@ -3,6 +3,7 @@ package server
 import (
 	"embed"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -131,7 +132,7 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSessionAPI(w http.ResponseWriter, r *http.Request) {
 	id, suffix, ok := parseSessionAPIPath(r.URL.Path)
-	if !ok || suffix != "scroll" {
+	if !ok {
 		http.NotFound(w, r)
 		return
 	}
@@ -141,6 +142,17 @@ func (s *Server) handleSessionAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	switch suffix {
+	case "scroll":
+		s.handleScrollAPI(w, r, id, session)
+	case "keys":
+		s.handleKeysAPI(w, r, id, session)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func (s *Server) handleScrollAPI(w http.ResponseWriter, r *http.Request, id string, session registry.Session) {
 	switch r.Method {
 	case http.MethodGet:
 		state, err := s.tmux.Status(r.Context(), session.TmuxName)
@@ -166,6 +178,29 @@ func (s *Server) handleSessionAPI(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func (s *Server) handleKeysAPI(w http.ResponseWriter, r *http.Request, id string, session registry.Session) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var request tmux.KeyRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		http.Error(w, "invalid key request", http.StatusBadRequest)
+		return
+	}
+	if err := s.tmux.SendKey(r.Context(), session.TmuxName, request); err != nil {
+		if errors.Is(err, tmux.ErrUnsupportedKey) {
+			http.Error(w, "unsupported key", http.StatusBadRequest)
+			return
+		}
+		s.logger.Error("tmux key command failed", "session", id, "key", request.Key, "error", err)
+		http.Error(w, "failed to send key", http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
 }
 
 func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {

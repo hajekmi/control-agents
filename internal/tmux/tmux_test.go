@@ -67,6 +67,56 @@ func TestScrollBottomCancelsCopyMode(t *testing.T) {
 	}
 }
 
+func TestSendKeyUsesSupportedTmuxKeyName(t *testing.T) {
+	runner := &fakeRunner{status: "0||100|24\n"}
+	client := NewClientWithRunner(runner)
+
+	err := client.SendKey(context.Background(), "main", KeyRequest{Key: "ctrl-c"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := [][]string{
+		{"output", "tmux", "display-message", "-p", "-t", "main", "#{pane_in_mode}|#{scroll_position}|#{history_size}|#{pane_height}"},
+		{"run", "tmux", "send-keys", "-t", "main", "C-c"},
+	}
+	if !reflect.DeepEqual(runner.calls, want) {
+		t.Fatalf("calls = %#v, want %#v", runner.calls, want)
+	}
+}
+
+func TestSendKeyCancelsCopyModeFirst(t *testing.T) {
+	runner := &fakeRunner{status: "1|20|100|24\n"}
+	client := NewClientWithRunner(runner)
+
+	err := client.SendKey(context.Background(), "main", KeyRequest{Key: "escape"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := [][]string{
+		{"output", "tmux", "display-message", "-p", "-t", "main", "#{pane_in_mode}|#{scroll_position}|#{history_size}|#{pane_height}"},
+		{"run", "tmux", "send-keys", "-t", "main", "-X", "cancel"},
+		{"run", "tmux", "send-keys", "-t", "main", "Escape"},
+	}
+	if !reflect.DeepEqual(runner.calls, want) {
+		t.Fatalf("calls = %#v, want %#v", runner.calls, want)
+	}
+}
+
+func TestSendKeyRejectsUnsupportedKey(t *testing.T) {
+	runner := &fakeRunner{status: "0||100|24\n"}
+	client := NewClientWithRunner(runner)
+
+	err := client.SendKey(context.Background(), "main", KeyRequest{Key: "ctrl-alt-delete"})
+	if err == nil {
+		t.Fatal("expected unsupported key error")
+	}
+	if len(runner.calls) != 0 {
+		t.Fatalf("calls = %#v, want none", runner.calls)
+	}
+}
+
 type fakeRunner struct {
 	status string
 	calls  [][]string

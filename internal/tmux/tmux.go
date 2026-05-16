@@ -43,6 +43,38 @@ type ScrollRequest struct {
 	Value  int    `json:"value,omitempty"`
 }
 
+type KeyRequest struct {
+	Key string `json:"key"`
+}
+
+var ErrUnsupportedKey = errors.New("unsupported key")
+
+var supportedKeys = map[string]string{
+	"ctrl-a":    "C-a",
+	"ctrl-c":    "C-c",
+	"ctrl-d":    "C-d",
+	"ctrl-e":    "C-e",
+	"ctrl-k":    "C-k",
+	"ctrl-l":    "C-l",
+	"ctrl-r":    "C-r",
+	"ctrl-u":    "C-u",
+	"ctrl-w":    "C-w",
+	"ctrl-z":    "C-z",
+	"escape":    "Escape",
+	"tab":       "Tab",
+	"enter":     "Enter",
+	"backspace": "BSpace",
+	"delete":    "DC",
+	"up":        "Up",
+	"down":      "Down",
+	"left":      "Left",
+	"right":     "Right",
+	"home":      "Home",
+	"end":       "End",
+	"page-up":   "PPage",
+	"page-down": "NPage",
+}
+
 func NewClient() *Client {
 	return NewClientWithRunner(ExecRunner{})
 }
@@ -118,6 +150,24 @@ func (c *Client) Scroll(ctx context.Context, target string, request ScrollReques
 	}
 
 	return c.Status(ctx, target)
+}
+
+func (c *Client) SendKey(ctx context.Context, target string, request KeyRequest) error {
+	key, ok := supportedKeys[strings.ToLower(strings.TrimSpace(request.Key))]
+	if !ok {
+		return fmt.Errorf("%w %q", ErrUnsupportedKey, request.Key)
+	}
+
+	state, err := c.Status(ctx, target)
+	if err != nil {
+		return err
+	}
+	if state.InCopyMode {
+		if err := c.sendCopyCommand(ctx, target, 1, "cancel"); err != nil {
+			return err
+		}
+	}
+	return c.runner.Run(ctx, "tmux", "send-keys", "-t", target, key)
 }
 
 func (c *Client) copyMode(ctx context.Context, target string) error {

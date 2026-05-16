@@ -115,6 +115,7 @@ Authenticated routes:
 - `GET /api/sessions`: returns active wrapper-registered sessions.
 - `GET /api/sessions/{session}/scroll`: returns tmux history scrollbar state for the active pane.
 - `POST /api/sessions/{session}/scroll`: scrolls tmux history. Body actions are `line-up`, `line-down`, `page-up`, `page-down`, `top`, `bottom`, or `set`.
+- `POST /api/sessions/{session}/keys`: sends a special key to the active tmux pane. Body key values include `ctrl-c`, `ctrl-d`, `ctrl-z`, `ctrl-l`, `escape`, `tab`, `enter`, arrows, `home`, `end`, `page-up`, and `page-down`.
 - `GET /terminal/{session}/...`: reverse proxies HTTP and WebSocket traffic to the matching `ttyd` Unix socket.
 
 The browser UI uses regular HTTPS requests for login, static assets, and JSON API calls. `/api/*` endpoints return `401 unauthorized` when the auth cookie is missing or expired, so `app.js` can redirect the browser back to `/login` without receiving an HTML login page as an API response.
@@ -151,6 +152,14 @@ Example scroll command:
 ```
 
 `value` is the scrollbar offset from the top of tmux pane history. The bottom position returns to live output.
+
+Example special key command:
+
+```json
+{
+  "key": "ctrl-c"
+}
+```
 
 ## systemd User Service
 
