@@ -33,6 +33,11 @@ documentation. Keep this file focused on working rules for future agents.
 - The parent app also captures vertical wheel events over the same-origin ttyd
   iframe and routes them through the same tmux-scroll API. Keep text selection
   working by leaving tmux mouse mode off by default.
+- The T-Control panel exposes tmux window and pane actions through a server-side
+  allowlist. Do not add arbitrary tmux command execution from browser input
+  without an explicit security review.
+- Session tabs may show a tiny tmux-window count badge, but only for sessions
+  with more than one internal tmux window so the iOS/Safari header stays compact.
 - Do not expose per-session `ttyd` TCP ports. `ttyd` must stay behind Unix
   sockets in the shared state directory.
 - Only wrapper-started sessions should appear in the UI unless the user changes
@@ -76,8 +81,8 @@ documentation. Keep this file focused on working rules for future agents.
 - Run `make test-e2e` when changing `bin/control-agents`, tmux behavior, `ttyd`
   startup, registry compatibility, or proxy routing.
 - Run `make test-browser` when changing browser UI behavior, iframe terminal
-  interaction, authentication flows, special key controls, or scrollbar/wheel
-  behavior.
+  interaction, authentication flows, special key controls, T-Control actions, or
+  scrollbar/wheel behavior.
 - The Makefile intentionally sets workspace-local Go caches, `TMUX_TMPDIR`, cgo
   off, and `GOFLAGS=-buildvcs=false` for restricted execution environments.
 

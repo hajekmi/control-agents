@@ -68,6 +68,7 @@ make test-browser
 ```
 
 These tests start the Go server, create a real tmux/ttyd session through `bin/control-agents`, log in through Chromium, and verify the tabbed UI, terminal iframe, special keys panel, logout flow, right-side history controls, and wheel scrolling over the terminal iframe.
+They also cover the T-Control panel for listing tmux windows, creating/selecting a tmux window through the web UI, and showing the compact tmux-window count badge on session tabs when a session has more than one tmux window.
 
 ## Versioning
 
@@ -178,9 +179,11 @@ Authenticated routes:
 - `GET /api/sessions/{session}/scroll`: returns tmux history scrollbar state for the active pane.
 - `POST /api/sessions/{session}/scroll`: scrolls tmux history. Body actions are `line-up`, `line-down`, `page-up`, `page-down`, `top`, `bottom`, or `set`.
 - `POST /api/sessions/{session}/keys`: sends a special key to the active tmux pane. Body key values include `ctrl-c`, `ctrl-d`, `ctrl-z`, `ctrl-l`, `escape`, `tab`, `enter`, arrows, `home`, `end`, `page-up`, and `page-down`.
+- `GET /api/sessions/{session}/tmux-control`: lists tmux windows for the session.
+- `POST /api/sessions/{session}/tmux-control`: runs an allowlisted tmux control action such as `new-window`, `select-window`, `next-window`, `previous-window`, `split-horizontal`, `split-vertical`, pane selection/resizing, `choose-window`, or `command-prompt`.
 - `GET /terminal/{session}/...`: reverse proxies HTTP and WebSocket traffic to the matching `ttyd` Unix socket.
 
-The browser UI uses regular HTTPS requests for login, static assets, and JSON API calls. `/api/*` endpoints return `401 unauthorized` when the auth cookie is missing or expired, so `app.js` can redirect the browser back to `/login` without receiving an HTML login page as an API response.
+The browser UI uses regular HTTPS requests for login, static assets, and JSON API calls. `/api/sessions` includes `tmuxWindowCount` only when a session has more than one internal tmux window; the tab row renders that value as a compact badge. `/api/*` endpoints return `401 unauthorized` when the auth cookie is missing or expired, so `app.js` can redirect the browser back to `/login` without receiving an HTML login page as an API response.
 
 Authenticated mutating routes require a same-origin `Origin` header, with `Referer` as a fallback for older clients. Terminal WebSocket upgrades under `/terminal/{session}/...` use the same origin check. This is intentionally strict because terminal actions are remote shell input.
 
@@ -226,6 +229,17 @@ Example special key command:
   "key": "ctrl-c"
 }
 ```
+
+Example T-Control command:
+
+```json
+{
+  "action": "select-window",
+  "windowIndex": 1
+}
+```
+
+T-Control intentionally uses an action allowlist instead of accepting arbitrary tmux commands from the browser. The web panel shows tmux windows, lets users switch windows, and exposes common window/pane controls.
 
 ## systemd User Service
 

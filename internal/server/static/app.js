@@ -12,10 +12,15 @@
   const actionsToggle = document.getElementById("actions-toggle");
   const actionsPopover = document.getElementById("actions-popover");
   const keysToggle = document.getElementById("keys-toggle");
+  const tControlToggle = document.getElementById("tcontrol-toggle");
   const versionBadge = document.getElementById("version-badge");
   const keyPanel = document.getElementById("key-panel");
   const keysClose = document.getElementById("keys-close");
   const keyGrid = document.getElementById("key-grid");
+  const tControlPanel = document.getElementById("tcontrol-panel");
+  const tControlClose = document.getElementById("tcontrol-close");
+  const tControlWindows = document.getElementById("tcontrol-windows");
+  const tControlGrid = document.getElementById("tcontrol-grid");
   const frames = new Map();
   const specialKeys = [
     { key: "ctrl-c", label: "Ctrl+C", title: "Interrupt", urgent: true },
@@ -42,8 +47,30 @@
     { key: "ctrl-w", label: "Ctrl+W", title: "Delete word" },
     { key: "delete", label: "Delete", title: "Delete" }
   ];
+  const tmuxControls = [
+    { action: "new-window", label: "New win", title: "New tmux window" },
+    { action: "rename-window", label: "Rename", title: "Rename active tmux window", prompt: true },
+    { action: "previous-window", label: "Prev win", title: "Previous tmux window" },
+    { action: "next-window", label: "Next win", title: "Next tmux window" },
+    { action: "choose-window", label: "Chooser", title: "Tmux window chooser" },
+    { action: "command-prompt", label: ": Prompt", title: "Tmux command prompt" },
+    { action: "split-horizontal", label: "Split H", title: "Split pane left/right" },
+    { action: "split-vertical", label: "Split V", title: "Split pane top/bottom" },
+    { action: "select-pane-left", label: "Pane L", title: "Select left pane" },
+    { action: "select-pane-right", label: "Pane R", title: "Select right pane" },
+    { action: "select-pane-up", label: "Pane U", title: "Select upper pane" },
+    { action: "select-pane-down", label: "Pane D", title: "Select lower pane" },
+    { action: "resize-pane-left", label: "Size L", title: "Resize pane left" },
+    { action: "resize-pane-right", label: "Size R", title: "Resize pane right" },
+    { action: "resize-pane-up", label: "Size U", title: "Resize pane up" },
+    { action: "resize-pane-down", label: "Size D", title: "Resize pane down" },
+    { action: "toggle-zoom", label: "Zoom", title: "Toggle pane zoom" },
+    { action: "close-pane", label: "Close pane", title: "Close active tmux pane", confirm: "Close active tmux pane?", urgent: true },
+    { action: "close-window", label: "Close win", title: "Close active tmux window", confirm: "Close active tmux window?", urgent: true }
+  ];
   let activeId = "";
   let scrollState = null;
+  let tmuxWindows = [];
   let dragging = false;
   let pendingSetTimer = 0;
   let pendingTerminalRepaintTimer = 0;
@@ -129,6 +156,10 @@
     requestTerminalResize();
     refreshScrollState();
     updateKeyButtons(false);
+    updateControlButtons(false);
+    if (!tControlPanel.hidden) {
+      refreshTmuxControl();
+    }
   }
 
   function render(sessions) {
@@ -144,9 +175,9 @@
     for (const session of sessions) {
       const button = document.createElement("button");
       button.type = "button";
-      button.textContent = session.name || session.id;
       button.dataset.sessionId = session.id;
       button.title = session.cwd || session.tmuxName || session.id;
+      renderSessionTabContent(button, session.name || session.id, session.tmuxWindowCount || 0);
       button.addEventListener("click", () => activate(session.id));
       tabs.appendChild(button);
 
@@ -170,7 +201,31 @@
     } else {
       emptyState.hidden = false;
       updateKeyButtons(false);
+      updateControlButtons(false);
     }
+  }
+
+  function renderSessionTabContent(button, labelText, tmuxWindowCount) {
+    button.replaceChildren();
+    const label = document.createElement("span");
+    label.className = "tab-label";
+    label.textContent = labelText;
+    button.appendChild(label);
+
+    if (Number(tmuxWindowCount) > 1) {
+      const badge = document.createElement("span");
+      badge.className = "tab-window-badge";
+      badge.textContent = String(tmuxWindowCount);
+      badge.title = `${tmuxWindowCount} tmux windows`;
+      button.appendChild(badge);
+    }
+  }
+
+  function updateSessionTabBadge(sessionId, tmuxWindowCount) {
+    const button = tabs.querySelector(`button[data-session-id="${sessionId}"]`);
+    if (!button) return;
+    const label = button.querySelector(".tab-label");
+    renderSessionTabContent(button, label ? label.textContent : sessionId, tmuxWindowCount);
   }
 
   async function refresh() {
@@ -314,6 +369,59 @@
     }
   }
 
+  async function fetchTmuxControl() {
+    if (!activeId) return { windows: [] };
+    const response = await fetch(`/api/sessions/${encodeURIComponent(activeId)}/tmux-control`, { credentials: "same-origin" });
+    if (response.status === 401) {
+      window.location.href = "/login";
+      return { windows: [] };
+    }
+    if (!response.ok) {
+      throw new Error(`tmux control state failed: ${response.status}`);
+    }
+    return response.json();
+  }
+
+  async function postTmuxControl(action, payload) {
+    if (!activeId) return;
+    updateControlButtons(true);
+    try {
+      const response = await fetch(`/api/sessions/${encodeURIComponent(activeId)}/tmux-control`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ action, ...(payload || {}) })
+      });
+      if (response.status === 401) {
+        window.location.href = "/login";
+        return;
+      }
+      if (!response.ok) {
+        throw new Error(`tmux control request failed: ${response.status}`);
+      }
+      renderTmuxWindows((await response.json()).windows || []);
+      focusActiveTerminal();
+      requestTerminalResize();
+      refreshScrollState();
+    } catch (error) {
+      console.error(error);
+    } finally {
+      updateControlButtons(false);
+    }
+  }
+
+  async function refreshTmuxControl() {
+    updateControlButtons(true);
+    try {
+      renderTmuxWindows((await fetchTmuxControl()).windows || []);
+    } catch (error) {
+      console.error(error);
+      renderTmuxWindows([]);
+    } finally {
+      updateControlButtons(false);
+    }
+  }
+
   function focusActiveTerminal() {
     const frame = frames.get(activeId);
     if (!frame) return;
@@ -340,9 +448,73 @@
     updateKeyButtons(false);
   }
 
+  function renderControlActions() {
+    tControlGrid.replaceChildren();
+    for (const control of tmuxControls) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = control.urgent ? "key-button urgent" : "key-button";
+      button.dataset.controlAction = control.action;
+      button.textContent = control.label;
+      button.title = control.title;
+      button.addEventListener("click", () => runControlAction(control));
+      tControlGrid.appendChild(button);
+    }
+    updateControlButtons(false);
+  }
+
+  function renderTmuxWindows(windows) {
+    tmuxWindows = windows;
+    updateSessionTabBadge(activeId, windows.length);
+    tControlWindows.replaceChildren();
+    if (!windows.length) {
+      const empty = document.createElement("div");
+      empty.className = "tcontrol-empty";
+      empty.textContent = "No tmux windows";
+      tControlWindows.appendChild(empty);
+      return;
+    }
+    for (const tmuxWindow of windows) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "tcontrol-window";
+      button.classList.toggle("active", Boolean(tmuxWindow.active));
+      button.dataset.windowIndex = String(tmuxWindow.index);
+      button.title = `${tmuxWindow.panes} pane${tmuxWindow.panes === 1 ? "" : "s"}`;
+      button.textContent = `${tmuxWindow.index}: ${tmuxWindow.name || "(unnamed)"}`;
+      button.addEventListener("click", () => postTmuxControl("select-window", { windowIndex: tmuxWindow.index }));
+      tControlWindows.appendChild(button);
+    }
+    updateControlButtons(false);
+  }
+
+  function runControlAction(control) {
+    const payload = {};
+    if (control.confirm && !window.confirm(control.confirm)) {
+      return;
+    }
+    if (control.prompt) {
+      const activeWindow = tmuxWindows.find((tmuxWindow) => tmuxWindow.active);
+      const name = window.prompt("Window name", activeWindow ? activeWindow.name : "");
+      if (name === null) return;
+      payload.name = name;
+    }
+    postTmuxControl(control.action, payload);
+  }
+
   function updateKeyButtons(sending) {
     const disabled = sending || !activeId;
     for (const button of keyGrid.querySelectorAll("button")) {
+      button.disabled = disabled;
+    }
+  }
+
+  function updateControlButtons(sending) {
+    const disabled = sending || !activeId;
+    for (const button of tControlGrid.querySelectorAll("button")) {
+      button.disabled = disabled;
+    }
+    for (const button of tControlWindows.querySelectorAll("button")) {
       button.disabled = disabled;
     }
   }
@@ -351,7 +523,17 @@
     keyPanel.hidden = !open;
     keysToggle.setAttribute("aria-expanded", String(open));
     if (open) {
+      setTControlPanelOpen(false);
       updateKeyButtons(false);
+    }
+  }
+
+  function setTControlPanelOpen(open) {
+    tControlPanel.hidden = !open;
+    tControlToggle.setAttribute("aria-expanded", String(open));
+    if (open) {
+      setKeyPanelOpen(false);
+      refreshTmuxControl();
     }
   }
 
@@ -471,7 +653,12 @@
     setKeyPanelOpen(true);
     setActionsMenuOpen(false);
   });
+  tControlToggle.addEventListener("click", () => {
+    setTControlPanelOpen(true);
+    setActionsMenuOpen(false);
+  });
   keysClose.addEventListener("click", () => setKeyPanelOpen(false));
+  tControlClose.addEventListener("click", () => setTControlPanelOpen(false));
   document.addEventListener("click", (event) => {
     if (actionsPopover.hidden || actionsMenu.contains(event.target)) return;
     setActionsMenuOpen(false);
@@ -480,9 +667,11 @@
     if (event.key !== "Escape") return;
     setActionsMenuOpen(false);
     setKeyPanelOpen(false);
+    setTControlPanelOpen(false);
   });
 
   renderKeyButtons();
+  renderControlActions();
   refreshVersion();
   refresh();
   window.setInterval(refresh, 3000);

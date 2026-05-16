@@ -16,6 +16,7 @@
           <button type="button" id="actions-toggle" class="secondary menu-button" aria-controls="actions-popover" aria-expanded="false">Menu</button>
           <div id="actions-popover" class="actions-popover" hidden>
             <button type="button" id="keys-toggle" class="action-menu-item" aria-controls="key-panel" aria-expanded="false">Keys</button>
+            <button type="button" id="tcontrol-toggle" class="action-menu-item" aria-controls="tcontrol-panel" aria-expanded="false">T-Control</button>
             <form method="post" action="/logout">
               <button type="submit" class="action-menu-item">Sign out</button>
             </form>
@@ -40,6 +41,14 @@
             <button type="button" id="keys-close" class="key-panel-close" title="Close special keys" aria-label="Close special keys">x</button>
           </div>
           <div id="key-grid" class="key-grid"></div>
+        </aside>
+        <aside id="tcontrol-panel" class="key-panel tcontrol-panel" aria-label="Tmux controls" hidden>
+          <div class="key-panel-header">
+            <h2>T-Control</h2>
+            <button type="button" id="tcontrol-close" class="key-panel-close" title="Close T-Control" aria-label="Close T-Control">x</button>
+          </div>
+          <div id="tcontrol-windows" class="tcontrol-windows"></div>
+          <div id="tcontrol-grid" class="key-grid tcontrol-grid"></div>
         </aside>
       </section>
     </main>

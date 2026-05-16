@@ -113,6 +113,42 @@ test("authenticates, renders registered terminal, sends special keys, and logs o
   expect((await keyResponse).status()).toBe(200);
 
   await page.getByLabel("Close special keys").click();
+
+  await page.getByRole("button", { name: "Menu" }).click();
+  await page.getByRole("button", { name: "T-Control" }).click();
+  await expect(page.getByLabel("Tmux controls")).toBeVisible();
+  const originalWindow = activeTmuxWindow(sessionName);
+  const sessionWindowBadge = page.locator(`#tabs button[data-session-id="${sessionName}"] .tab-window-badge`);
+  await expect(sessionWindowBadge).toHaveCount(0);
+  await expect(page.locator("#tcontrol-windows button").filter({ hasText: new RegExp(`^${originalWindow}:`) })).toBeVisible();
+
+  const controlRequest = page.waitForRequest((request) => {
+    return request.method() === "POST" && request.url().includes(`/api/sessions/${encodeURIComponent(sessionName)}/tmux-control`);
+  });
+  const controlResponse = page.waitForResponse((response) => {
+    return response.request().method() === "POST" && response.url().includes(`/api/sessions/${encodeURIComponent(sessionName)}/tmux-control`);
+  });
+  await page.getByRole("button", { name: "New win" }).click();
+  expect((await controlRequest).postDataJSON()).toEqual({ action: "new-window" });
+  expect((await controlResponse).status()).toBe(200);
+  await expect.poll(() => tmuxWindowCount(sessionName)).toBeGreaterThan(1);
+  await expect(sessionWindowBadge).toHaveText(String(tmuxWindowCount(sessionName)));
+  const createdWindow = activeTmuxWindow(sessionName);
+
+  const selectRequest = page.waitForRequest((request) => {
+    return request.method() === "POST" && request.url().includes(`/api/sessions/${encodeURIComponent(sessionName)}/tmux-control`);
+  });
+  const selectResponse = page.waitForResponse((response) => {
+    return response.request().method() === "POST" && response.url().includes(`/api/sessions/${encodeURIComponent(sessionName)}/tmux-control`);
+  });
+  await page.locator("#tcontrol-windows button").filter({ hasText: new RegExp(`^${originalWindow}:`) }).click();
+  expect((await selectRequest).postDataJSON()).toEqual({ action: "select-window", windowIndex: originalWindow });
+  expect((await selectResponse).status()).toBe(200);
+  if (createdWindow !== originalWindow) {
+    run("tmux", ["kill-window", "-t", `${sessionName}:${createdWindow}`]);
+  }
+
+  await page.getByLabel("Close T-Control").click();
   await page.getByRole("button", { name: "Menu" }).click();
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page).toHaveURL(/\/login$/);
@@ -281,6 +317,14 @@ function tmuxWindowSize(session) {
     width: Number.parseInt(width, 10),
     height: Number.parseInt(height, 10)
   };
+}
+
+function tmuxWindowCount(session) {
+  return run("tmux", ["list-windows", "-t", session]).trim().split("\n").filter(Boolean).length;
+}
+
+function activeTmuxWindow(session) {
+  return Number.parseInt(run("tmux", ["display-message", "-p", "-t", session, "#{window_index}"]).trim(), 10);
 }
 
 function killRegisteredTtyd() {

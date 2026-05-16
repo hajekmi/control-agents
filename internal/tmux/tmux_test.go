@@ -326,10 +326,80 @@ func TestSendKeyRejectsUnsupportedKey(t *testing.T) {
 	}
 }
 
+func TestWindowsParsesListWindows(t *testing.T) {
+	runner := &fakeRunner{
+		windows: "0\x1fshell\x1f1\x1f2\n1\x1feditor\x1f0\x1f1\n",
+	}
+	client := NewClientWithRunner(runner)
+
+	windows, err := client.Windows(context.Background(), "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []Window{
+		{Index: 0, Name: "shell", Active: true, Panes: 2},
+		{Index: 1, Name: "editor", Active: false, Panes: 1},
+	}
+	if !reflect.DeepEqual(windows, want) {
+		t.Fatalf("windows = %#v, want %#v", windows, want)
+	}
+}
+
+func TestControlNewWindowUsesPaneCurrentPathAndReturnsWindows(t *testing.T) {
+	runner := &fakeRunner{
+		windows: "0\x1fshell\x1f1\x1f1\n1\x1fnew\x1f0\x1f1\n",
+	}
+	client := NewClientWithRunner(runner)
+
+	windows, err := client.Control(context.Background(), "main", ControlRequest{Action: "new-window"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantCalls := [][]string{
+		{"run", "tmux", "new-window", "-t", "main:", "-c", "#{pane_current_path}"},
+		{"output", "tmux", "list-windows", "-t", "main", "-F", windowListFormat()},
+	}
+	if !reflect.DeepEqual(runner.calls, wantCalls) {
+		t.Fatalf("calls = %#v, want %#v", runner.calls, wantCalls)
+	}
+	if len(windows) != 2 {
+		t.Fatalf("len(windows) = %d, want 2", len(windows))
+	}
+}
+
+func TestControlSelectWindowRequiresIndex(t *testing.T) {
+	runner := &fakeRunner{}
+	client := NewClientWithRunner(runner)
+
+	_, err := client.Control(context.Background(), "main", ControlRequest{Action: "select-window"})
+	if !errors.Is(err, ErrInvalidControlRequest) {
+		t.Fatalf("err = %v, want ErrInvalidControlRequest", err)
+	}
+	if len(runner.calls) != 0 {
+		t.Fatalf("calls = %#v, want none", runner.calls)
+	}
+}
+
+func TestControlRejectsUnsupportedAction(t *testing.T) {
+	runner := &fakeRunner{}
+	client := NewClientWithRunner(runner)
+
+	_, err := client.Control(context.Background(), "main", ControlRequest{Action: "attach-session"})
+	if !errors.Is(err, ErrUnsupportedControlAction) {
+		t.Fatalf("err = %v, want ErrUnsupportedControlAction", err)
+	}
+	if len(runner.calls) != 0 {
+		t.Fatalf("calls = %#v, want none", runner.calls)
+	}
+}
+
 type fakeRunner struct {
 	status   string
 	statuses []string
 	clients  string
+	windows  string
 	calls    [][]string
 }
 
@@ -340,6 +410,13 @@ func (f *fakeRunner) Output(ctx context.Context, name string, args ...string) ([
 		}
 		f.calls = append(f.calls, append([]string{"output", name}, args...))
 		return []byte(f.clients), nil
+	}
+	if len(args) > 0 && args[0] == "list-windows" {
+		if f.windows == "" {
+			return nil, errors.New("no windows")
+		}
+		f.calls = append(f.calls, append([]string{"output", name}, args...))
+		return []byte(f.windows), nil
 	}
 	f.calls = append(f.calls, append([]string{"output", name}, args...))
 	if len(f.statuses) > 0 {

@@ -34,6 +34,11 @@ type Server struct {
 	limiter  *loginLimiter
 }
 
+type sessionResponse struct {
+	registry.Session
+	TmuxWindowCount int `json:"tmuxWindowCount,omitempty"`
+}
+
 func New(cfg config.Config, logger *slog.Logger) (*Server, error) {
 	store := registry.NewStore(cfg.StateDir)
 	if err := store.Ensure(); err != nil {
@@ -168,8 +173,17 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to list sessions", http.StatusInternalServerError)
 		return
 	}
+	payload := make([]sessionResponse, 0, len(sessions))
+	for _, session := range sessions {
+		next := sessionResponse{Session: session}
+		windows, err := s.tmux.Windows(r.Context(), session.TmuxName)
+		if err == nil && len(windows) > 1 {
+			next.TmuxWindowCount = len(windows)
+		}
+		payload = append(payload, next)
+	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"sessions": sessions})
+	_ = json.NewEncoder(w).Encode(map[string]any{"sessions": payload})
 }
 
 func (s *Server) handleSessionAPI(w http.ResponseWriter, r *http.Request) {
@@ -189,6 +203,8 @@ func (s *Server) handleSessionAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleScrollAPI(w, r, id, session)
 	case "keys":
 		s.handleKeysAPI(w, r, id, session)
+	case "tmux-control":
+		s.handleTmuxControlAPI(w, r, id, session)
 	default:
 		http.NotFound(w, r)
 	}
@@ -243,6 +259,38 @@ func (s *Server) handleKeysAPI(w http.ResponseWriter, r *http.Request, id string
 		return
 	}
 	writeJSON(w, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleTmuxControlAPI(w http.ResponseWriter, r *http.Request, id string, session registry.Session) {
+	switch r.Method {
+	case http.MethodGet:
+		windows, err := s.tmux.Windows(r.Context(), session.TmuxName)
+		if err != nil {
+			s.logger.Error("tmux window list failed", "session", id, "error", err)
+			http.Error(w, "failed to list tmux windows", http.StatusBadGateway)
+			return
+		}
+		writeJSON(w, map[string]any{"windows": windows})
+	case http.MethodPost:
+		var request tmux.ControlRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			http.Error(w, "invalid tmux control request", http.StatusBadRequest)
+			return
+		}
+		windows, err := s.tmux.Control(r.Context(), session.TmuxName, request)
+		if err != nil {
+			if errors.Is(err, tmux.ErrUnsupportedControlAction) || errors.Is(err, tmux.ErrInvalidControlRequest) {
+				http.Error(w, "unsupported tmux control action", http.StatusBadRequest)
+				return
+			}
+			s.logger.Error("tmux control command failed", "session", id, "action", request.Action, "error", err)
+			http.Error(w, "failed to run tmux control action", http.StatusBadGateway)
+			return
+		}
+		writeJSON(w, map[string]any{"windows": windows})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {

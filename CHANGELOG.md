@@ -4,6 +4,11 @@ Versions use calendar numbering: `YYYY.M.REVISION`.
 
 ## Unreleased
 
+## 2026.5.9 - 2026-05-16
+
+- Add a T-Control menu panel with tmux window listing and allowlisted window/pane control actions.
+- Show a compact tmux window-count badge on session tabs only when a session has multiple internal tmux windows.
+
 ## 2026.5.8 - 2026-05-16
 
 - Prefer the registered ttyd tmux client throughout web history scroll APIs, including copy-mode cleanup, so browser scrolling does not accidentally pan or repaint a smaller SSH tmux client.

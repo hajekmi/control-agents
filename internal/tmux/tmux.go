@@ -54,7 +54,22 @@ type KeyRequest struct {
 	Key string `json:"key"`
 }
 
+type Window struct {
+	Index  int    `json:"index"`
+	Name   string `json:"name"`
+	Active bool   `json:"active"`
+	Panes  int    `json:"panes"`
+}
+
+type ControlRequest struct {
+	Action      string `json:"action"`
+	WindowIndex *int   `json:"windowIndex,omitempty"`
+	Name        string `json:"name,omitempty"`
+}
+
 var ErrUnsupportedKey = errors.New("unsupported key")
+var ErrUnsupportedControlAction = errors.New("unsupported tmux control action")
+var ErrInvalidControlRequest = errors.New("invalid tmux control request")
 
 var supportedKeys = map[string]string{
 	"ctrl-a":    "C-a",
@@ -183,6 +198,76 @@ func (c *Client) SendKey(ctx context.Context, target string, request KeyRequest)
 		}
 	}
 	return c.runner.Run(ctx, "tmux", "send-keys", "-t", target, key)
+}
+
+func (c *Client) Windows(ctx context.Context, target string) ([]Window, error) {
+	output, err := c.runner.Output(ctx, "tmux", "list-windows", "-t", target, "-F", windowListFormat())
+	if err != nil {
+		return nil, err
+	}
+	return parseWindows(string(output))
+}
+
+func (c *Client) Control(ctx context.Context, target string, request ControlRequest) ([]Window, error) {
+	if err := c.control(ctx, target, request); err != nil {
+		return nil, err
+	}
+	return c.Windows(ctx, target)
+}
+
+func (c *Client) control(ctx context.Context, target string, request ControlRequest) error {
+	action := strings.ToLower(strings.TrimSpace(request.Action))
+	switch action {
+	case "new-window":
+		return c.runner.Run(ctx, "tmux", "new-window", "-t", target+":", "-c", "#{pane_current_path}")
+	case "select-window":
+		if request.WindowIndex == nil || *request.WindowIndex < 0 {
+			return fmt.Errorf("%w: missing window index", ErrInvalidControlRequest)
+		}
+		return c.runner.Run(ctx, "tmux", "select-window", "-t", fmt.Sprintf("%s:%d", target, *request.WindowIndex))
+	case "next-window":
+		return c.runner.Run(ctx, "tmux", "next-window", "-t", target)
+	case "previous-window":
+		return c.runner.Run(ctx, "tmux", "previous-window", "-t", target)
+	case "rename-window":
+		name := strings.TrimSpace(request.Name)
+		if name == "" || strings.ContainsAny(name, "\r\n") {
+			return fmt.Errorf("%w: invalid window name", ErrInvalidControlRequest)
+		}
+		return c.runner.Run(ctx, "tmux", "rename-window", "-t", target, name)
+	case "split-horizontal":
+		return c.runner.Run(ctx, "tmux", "split-window", "-h", "-t", target, "-c", "#{pane_current_path}")
+	case "split-vertical":
+		return c.runner.Run(ctx, "tmux", "split-window", "-v", "-t", target, "-c", "#{pane_current_path}")
+	case "select-pane-left":
+		return c.runner.Run(ctx, "tmux", "select-pane", "-t", target, "-L")
+	case "select-pane-right":
+		return c.runner.Run(ctx, "tmux", "select-pane", "-t", target, "-R")
+	case "select-pane-up":
+		return c.runner.Run(ctx, "tmux", "select-pane", "-t", target, "-U")
+	case "select-pane-down":
+		return c.runner.Run(ctx, "tmux", "select-pane", "-t", target, "-D")
+	case "resize-pane-left":
+		return c.runner.Run(ctx, "tmux", "resize-pane", "-t", target, "-L", "5")
+	case "resize-pane-right":
+		return c.runner.Run(ctx, "tmux", "resize-pane", "-t", target, "-R", "5")
+	case "resize-pane-up":
+		return c.runner.Run(ctx, "tmux", "resize-pane", "-t", target, "-U", "5")
+	case "resize-pane-down":
+		return c.runner.Run(ctx, "tmux", "resize-pane", "-t", target, "-D", "5")
+	case "toggle-zoom":
+		return c.runner.Run(ctx, "tmux", "resize-pane", "-Z", "-t", target)
+	case "close-pane":
+		return c.runner.Run(ctx, "tmux", "kill-pane", "-t", target)
+	case "close-window":
+		return c.runner.Run(ctx, "tmux", "kill-window", "-t", target)
+	case "choose-window":
+		return c.runner.Run(ctx, "tmux", "choose-tree", "-w", "-t", target)
+	case "command-prompt":
+		return c.runner.Run(ctx, "tmux", "command-prompt", "-t", target)
+	default:
+		return fmt.Errorf("%w %q", ErrUnsupportedControlAction, request.Action)
+	}
 }
 
 func (c *Client) copyMode(ctx context.Context, target string) error {
@@ -587,6 +672,53 @@ func parseOptionalInt(value string) (int, error) {
 		return 0, nil
 	}
 	return strconv.Atoi(value)
+}
+
+func windowListFormat() string {
+	return strings.Join([]string{"#{window_index}", "#{window_name}", "#{window_active}", "#{window_panes}"}, "\x1f")
+}
+
+func parseWindows(output string) ([]Window, error) {
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	windows := make([]Window, 0, len(lines))
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		window, err := parseWindow(line)
+		if err != nil {
+			return nil, err
+		}
+		windows = append(windows, window)
+	}
+	return windows, nil
+}
+
+func parseWindow(line string) (Window, error) {
+	parts := strings.Split(strings.TrimSpace(line), "\x1f")
+	if len(parts) != 4 {
+		return Window{}, errors.New("unexpected tmux window format")
+	}
+	index, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return Window{}, fmt.Errorf("parse window index: %w", err)
+	}
+	panes, err := parseOptionalInt(parts[3])
+	if err != nil {
+		return Window{}, fmt.Errorf("parse window panes: %w", err)
+	}
+	if index < 0 {
+		index = 0
+	}
+	if panes < 0 {
+		panes = 0
+	}
+	return Window{
+		Index:  index,
+		Name:   parts[1],
+		Active: parts[2] == "1",
+		Panes:  panes,
+	}, nil
 }
 
 func processDescendsFrom(pid, ancestor int) bool {

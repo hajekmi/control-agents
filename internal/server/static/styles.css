@@ -235,11 +235,30 @@ button.secondary {
 }
 
 .tabs button {
+  align-items: center;
+  display: flex;
   flex: 0 0 auto;
+  gap: 6px;
   max-width: 260px;
+}
+
+.tab-label {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.tab-window-badge {
+  background: #c93636;
+  border: 1px solid #ff8a82;
+  border-radius: 999px;
+  color: #fff2f1;
+  flex: 0 0 auto;
+  font: 10px/14px ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
+  min-width: 16px;
+  padding: 0 4px;
+  text-align: center;
 }
 
 .terminal-pane {
@@ -415,6 +434,50 @@ button.secondary {
   opacity: 0.48;
 }
 
+.tcontrol-panel {
+  max-height: min(540px, calc(100% - 20px - env(safe-area-inset-top) - env(safe-area-inset-bottom)));
+  overflow: auto;
+}
+
+.tcontrol-windows {
+  border-bottom: 1px solid var(--border);
+  display: grid;
+  gap: 5px;
+  margin-bottom: 8px;
+  max-height: 142px;
+  overflow: auto;
+  padding-bottom: 8px;
+}
+
+.tcontrol-window {
+  border-radius: 5px;
+  display: block;
+  min-height: 34px;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0 9px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  width: 100%;
+}
+
+.tcontrol-window.active {
+  background: #243b3a;
+  border-color: var(--accent);
+}
+
+.tcontrol-empty {
+  color: var(--muted);
+  font-size: 12px;
+  min-height: 30px;
+  padding: 6px 2px 0;
+}
+
+.tcontrol-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .login-page {
   padding: 0;
 }
@@ -561,6 +624,13 @@ button.secondary {
     padding: 0 8px;
   }
 
+  .tab-window-badge {
+    font-size: 9px;
+    line-height: 13px;
+    min-width: 15px;
+    padding: 0 3px;
+  }
+
   .terminal-frame {
     min-width: min(var(--terminal-min-width), 240vw);
   }
@@ -581,6 +651,14 @@ button.secondary {
   .key-button {
     font-size: 11px;
     min-height: 34px;
+  }
+
+  .tcontrol-windows {
+    max-height: 120px;
+  }
+
+  .tcontrol-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .login-panel {
