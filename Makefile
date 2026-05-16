@@ -2,6 +2,11 @@
 
 BINARY := bin/control-agents
 CLIENT_MIRROR := bin/client_mirror
+VERSION_PKG := terminal-mirror/internal/version
+VERSION ?= $(shell git describe --tags --dirty --always --match 'v[0-9]*' 2>/dev/null | sed 's/^v//' || printf dev)
+COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || printf unknown)
+BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+LDVARS := -X $(VERSION_PKG).Version=$(VERSION) -X $(VERSION_PKG).Commit=$(COMMIT) -X $(VERSION_PKG).BuildDate=$(BUILD_DATE)
 INSTALL_BINARY ?= $(HOME)/.local/bin/control-agents
 CLIENT_MIRROR_INSTALL ?= /usr/local/bin/client_mirror
 XDG_CONFIG_HOME ?= $(HOME)/.config
@@ -33,10 +38,10 @@ prepare-cache:
 	chmod 700 $(TMUX_TMPDIR)
 
 build: prepare-cache
-	go build -o $(BINARY) ./cmd/server
+	go build -ldflags "$(LDVARS)" -o $(BINARY) ./cmd/server
 
 run: prepare-cache
-	go run ./cmd/server
+	go run -ldflags "$(LDVARS)" ./cmd/server
 
 test: prepare-cache
 	go test ./...

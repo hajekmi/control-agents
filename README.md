@@ -24,6 +24,13 @@ make build
 
 The default Makefile uses local Go cache directories under `.cache/` and disables cgo. This keeps tests working in restricted environments and produces a simple Linux binary.
 
+Build metadata is injected from git by default. Override it explicitly when needed:
+
+```sh
+make build VERSION=2026.5.1
+bin/control-agents --version
+```
+
 Run real tmux/ttyd E2E checks explicitly:
 
 ```sh
@@ -31,6 +38,26 @@ make test-e2e
 ```
 
 The E2E test is opt-in because it starts real processes. It skips only when `RUN_E2E` is not set or required tools are unavailable.
+
+## Versioning
+
+Releases use calendar versioning: `YYYY.M.REVISION`.
+
+- `YYYY` is the release year.
+- `M` is the release month without a leading zero.
+- `REVISION` starts at `1` each month and increments for each release in that month.
+
+Git release tags use a `v` prefix, for example `v2026.5.1`. Runtime output omits the prefix and includes commit/build metadata through `control-agents --version`, startup logs, and `GET /api/version`.
+
+Breaking changes are called out in `CHANGELOG.md` with `BREAKING:` because compatibility is not encoded in the version number.
+
+Release checklist:
+
+```sh
+make test
+git tag -a v2026.5.1 -m "Release 2026.5.1"
+make build
+```
 
 ## Run Locally
 
@@ -112,6 +139,7 @@ Authenticated routes:
 
 - `GET /`: tabbed web UI.
 - `POST /logout`: clears the auth cookie and redirects to `/login`.
+- `GET /api/version`: returns server build metadata.
 - `GET /api/sessions`: returns active wrapper-registered sessions.
 - `GET /api/sessions/{session}/scroll`: returns tmux history scrollbar state for the active pane.
 - `POST /api/sessions/{session}/scroll`: scrolls tmux history. Body actions are `line-up`, `line-down`, `page-up`, `page-down`, `top`, `bottom`, or `set`.

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -13,9 +14,15 @@ import (
 	"terminal-mirror/internal/cert"
 	"terminal-mirror/internal/config"
 	"terminal-mirror/internal/server"
+	"terminal-mirror/internal/version"
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--version" {
+		fmt.Printf("control-agents %s\n", version.String())
+		return
+	}
+
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
 	cfg, err := config.LoadFromEnv()
@@ -42,7 +49,8 @@ func main() {
 
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("terminal mirror listening", "scheme", "https", "addr", cfg.ListenAddress(), "state_dir", cfg.StateDir, "tls_cert", cfg.TLSCertFile)
+		build := version.Current()
+		logger.Info("terminal mirror listening", "scheme", "https", "addr", cfg.ListenAddress(), "state_dir", cfg.StateDir, "tls_cert", cfg.TLSCertFile, "version", build.Version, "commit", build.Commit, "build_date", build.BuildDate)
 		errCh <- httpServer.ListenAndServeTLS(cfg.TLSCertFile, cfg.TLSKeyFile)
 	}()
 

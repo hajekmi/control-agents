@@ -16,6 +16,7 @@ import (
 	"terminal-mirror/internal/proxy"
 	"terminal-mirror/internal/registry"
 	"terminal-mirror/internal/tmux"
+	"terminal-mirror/internal/version"
 )
 
 //go:embed static
@@ -62,6 +63,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/logout", s.handleLogout)
 	s.mux.HandleFunc("/app.js", s.handlePublicStaticAsset)
 	s.mux.HandleFunc("/styles.css", s.handlePublicStaticAsset)
+	s.mux.Handle("/api/version", s.auth.RequireAPI(http.HandlerFunc(s.handleVersion)))
 	s.mux.Handle("/api/sessions", s.auth.RequireAPI(http.HandlerFunc(s.handleSessions)))
 	s.mux.Handle("/api/sessions/", s.auth.RequireAPI(http.HandlerFunc(s.handleSessionAPI)))
 	s.mux.Handle("/terminal/", s.auth.RequireAPI(proxy.New(s.registry)))
@@ -113,6 +115,14 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	}
 	s.auth.Logout(w)
 	http.Redirect(w, r, "/login", http.StatusFound)
+}
+
+func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	writeJSON(w, version.Current())
 }
 
 func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {

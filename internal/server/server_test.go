@@ -71,6 +71,28 @@ func TestLoginAndSessionList(t *testing.T) {
 	}
 }
 
+func TestLoginAndVersion(t *testing.T) {
+	handler := newTestServer(t)
+	login := httptest.NewRecorder()
+	loginRequest := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("password=secret"))
+	loginRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	handler.ServeHTTP(login, loginRequest)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/version", nil)
+	for _, cookie := range login.Result().Cookies() {
+		request.AddCookie(cookie)
+	}
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %q", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"version"`) {
+		t.Fatalf("unexpected body %q", recorder.Body.String())
+	}
+}
+
 func TestRootAfterLoginReturnsIndexWithoutRedirect(t *testing.T) {
 	handler := newTestServer(t)
 	login := httptest.NewRecorder()
