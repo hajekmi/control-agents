@@ -4,6 +4,11 @@ Versions use calendar numbering: `YYYY.M.REVISION`.
 
 ## Unreleased
 
+## 2026.5.7 - 2026-05-16
+
+- Keep terminal text selection working with tmux mouse mode off while routing browser wheel scrolling through the tmux history scrollbar API.
+- Add Playwright browser E2E coverage for login, registered terminal tabs, special keys, logout, history buttons, and terminal iframe wheel scrolling.
+
 ## 2026.5.6 - 2026-05-16
 
 - Fix repaint, copy-mode cleanup, and tmux status-line height handling when returning the terminal scrollbar to live bottom.

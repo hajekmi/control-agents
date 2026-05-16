@@ -1,3 +1,6 @@
 .cache/
 bin/control-agents-server
 bin/server
+node_modules/
+playwright-report/
+test-results/

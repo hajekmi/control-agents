@@ -1,4 +1,4 @@
-.PHONY: build run test test-e2e clean prepare-cache install uninstall restart
+.PHONY: build run test test-e2e test-browser clean prepare-cache install uninstall restart
 
 SERVER_BINARY := bin/control-agents-server
 CLIENT_BINARY := bin/control-agents
@@ -50,6 +50,9 @@ test: prepare-cache
 
 test-e2e: prepare-cache
 	RUN_E2E=1 go test -count=1 ./test/e2e
+
+test-browser: prepare-cache
+	npx playwright test
 
 install: build
 	$(INSTALL) -d $(dir $(SERVER_INSTALL)) $(SYSTEMD_USER_DIR) $(APP_CONFIG_DIR)

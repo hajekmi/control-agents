@@ -4,15 +4,37 @@ Terminal Mirror exposes wrapper-started tmux sessions through one password-prote
 
 ## Requirements
 
-- Go 1.25 or newer can build the module, but release/security builds should use the latest stable Go toolchain. As of 2026-05-16, the official stable release is Go 1.26.3.
+Runtime:
+
 - `tmux` for shared terminal sessions.
 - `ttyd` for browser terminal I/O.
-- `make` for the provided workflow.
 
-On this VM, `tmux` and `ttyd` are expected to come from Homebrew:
+Development:
+
+- Go 1.25 or newer can build the module, but release/security builds should use the latest stable Go toolchain. As of 2026-05-16, the official stable release is Go 1.26.3.
+- `make` for the provided workflow.
+- Node.js 20, 22, or 24 plus npm for Playwright browser E2E tests.
+
+On this VM, `tmux` and `ttyd` are expected to come from Homebrew. Node.js is already available from the system package set, but Homebrew `node@22` also works:
 
 ```sh
 brew install tmux ttyd
+# optional when system node is unavailable or too old:
+brew install node@22
+export PATH="/home/linuxbrew/.linuxbrew/opt/node@22/bin:$PATH"
+```
+
+Playwright is a project-local dev dependency. Install JavaScript dependencies from the repo root:
+
+```sh
+npm install
+npx playwright install chromium
+```
+
+On AlmaLinux/RHEL-like hosts, Chromium also needs system libraries. If `make test-browser` reports missing browser dependencies, install the matching packages:
+
+```sh
+sudo dnf install -y nspr nss atk at-spi2-atk at-spi2-core cups-libs libxcb libxkbcommon alsa-lib mesa-libgbm libX11 libXext cairo pango libXcomposite libXdamage libXfixes libXrandr
 ```
 
 ## Build And Test
@@ -38,6 +60,14 @@ make test-e2e
 ```
 
 The E2E test is opt-in because it starts real processes. It skips only when `RUN_E2E` is not set or required tools are unavailable.
+
+Run browser E2E checks with Playwright:
+
+```sh
+make test-browser
+```
+
+These tests start the Go server, create a real tmux/ttyd session through `bin/control-agents`, log in through Chromium, and verify the tabbed UI, terminal iframe, special keys panel, logout flow, right-side history controls, and wheel scrolling over the terminal iframe.
 
 ## Versioning
 
@@ -109,7 +139,7 @@ The wrapper reads:
 - `MIRROR_DISPLAY_NAME`, optional label for the browser tab
 - `MIRROR_APP_NAME`, optional override for tmux status-left; default is the session display name
 - `MIRROR_TMUX_WINDOW_SIZE`, default `largest`
-- `MIRROR_TMUX_MOUSE`, default `on`
+- `MIRROR_TMUX_MOUSE`, default `off`
 - `MIRROR_WEB_SCROLLBACK_LINES`, default `10000`
 - `MIRROR_NO_ATTACH=1`, test/support mode that registers the session without attaching the current terminal
 
@@ -125,7 +155,7 @@ Keep `MIRROR_STATE_DIR` reasonably short. Unix domain socket paths have a small 
 
 `MIRROR_WEB_SCROLLBACK_LINES` controls browser-side terminal history retained by `ttyd`/xterm.js while the web tab is connected. It does not replay tmux output that happened before the browser connected.
 
-Because the browser is attached to tmux, mouse wheel history is primarily tmux pane history, not xterm.js scrollback. `control-agents` enables `MIRROR_TMUX_MOUSE=on` by default so the wheel scrolls tmux history instead of sending arrow-key events to the shell prompt. Disable it with `MIRROR_TMUX_MOUSE=off` if you prefer the old tmux behavior.
+Because the browser is attached to tmux, `control-agents` keeps `MIRROR_TMUX_MOUSE=off` by default so normal terminal text selection works without tmux intercepting mouse drag. The parent web app captures vertical wheel events over the terminal iframe and sends them to the tmux scroll API, so the right-side history scrollbar moves without sending arrow-key events to the shell prompt. Start or refresh a session with `MIRROR_TMUX_MOUSE=on` only if you prefer tmux to own all mouse handling.
 
 The right-side web scrollbar combines tmux pane history with tmux client window offset. This matters on small screens when `MIRROR_TMUX_WINDOW_SIZE=largest` keeps the tmux window taller than the iOS Safari viewport: the live tmux screen can have vertical overflow even before lines move into tmux history. The server accounts for tmux's status line when calculating the visible pane height so returning the scrollbar to the bottom lands back on the live prompt, not behind the status line.
 
@@ -287,6 +317,6 @@ ssh -L 8080:127.0.0.1:8080 user@vm
 - Session disappears: the service removes stale registry files when the `ttyd` PID, tmux session, or Unix socket is gone.
 - Browser and SSH sizes differ: both clients attach to the same tmux session. The wrapper sets tmux `window-size` to `largest` by default so browser activity does not constantly resize a larger SSH client. Override with `MIRROR_TMUX_WINDOW_SIZE=latest`, `smallest`, or `manual` if needed.
 - Browser history is too short while the web tab is connected: increase `MIRROR_WEB_SCROLLBACK_LINES` before starting `bin/control-agents <name>`, then reconnect the web tab.
-- Mouse wheel cycles shell command history: make sure the session was started or refreshed with `MIRROR_TMUX_MOUSE=on bin/control-agents <name>`.
-- Use the right-side web scrollbar to scroll tmux pane history and small-client live-window overflow on browsers where iframe wheel handling is unreliable.
+- Mouse wheel cycles shell command history: reinstall and restart the service so the current web UI captures terminal wheel events. Use the right-side web scrollbar on browsers where iframe wheel handling is unreliable.
+- Use the right-side web scrollbar to scroll tmux pane history and small-client live-window overflow directly.
 - On narrow mobile screens, the terminal area has horizontal scrolling so the tmux pane can keep a usable width without rotating the device.

@@ -47,6 +47,7 @@
   let dragging = false;
   let pendingSetTimer = 0;
   let pendingTerminalRepaintTimer = 0;
+  const frameWheelBindings = new WeakMap();
 
   function setHeartbeat(state) {
     heartbeat.dataset.state = state;
@@ -155,6 +156,7 @@
         frame.title = session.name || session.id;
         frame.src = `/terminal/${encodeURIComponent(session.id)}/`;
         frame.hidden = true;
+        frame.addEventListener("load", () => bindFrameWheelScroll(session.id, frame));
         terminalStrip.appendChild(frame);
         frames.set(session.id, frame);
       }
@@ -229,6 +231,61 @@
       scheduleLiveTerminalRepaint();
     }
     return next;
+  }
+
+  function wheelLineAmount(event) {
+    const delta = Math.abs(event.deltaY);
+    if (event.deltaMode === 1) {
+      return Math.min(80, Math.max(1, Math.round(delta)));
+    }
+    if (event.deltaMode === 2) {
+      const pageRows = scrollState && scrollState.paneHeight > 0 ? scrollState.paneHeight : 24;
+      return Math.min(160, Math.max(1, Math.round(delta * pageRows)));
+    }
+    return Math.min(80, Math.max(1, Math.round(delta / 24)));
+  }
+
+  function handleHistoryWheel(event, options) {
+    if (!activeId || Math.abs(event.deltaY) <= Math.abs(event.deltaX) || event.ctrlKey) return;
+    event.preventDefault();
+    if (options && options.blockTerminalHandlers) {
+      event.stopPropagation();
+      if (typeof event.stopImmediatePropagation === "function") {
+        event.stopImmediatePropagation();
+      }
+    }
+    if (!scrollState) {
+      refreshScrollState();
+      return;
+    }
+    if (scrollState.scrollMax <= 0) return;
+    const scrollingUp = event.deltaY < 0;
+    if ((scrollingUp && scrollState.scrollTop <= 0) || (!scrollingUp && scrollState.scrollTop >= scrollState.scrollMax)) {
+      return;
+    }
+    postScroll(scrollingUp ? "line-up" : "line-down", { amount: wheelLineAmount(event) });
+  }
+
+  function bindFrameWheelScroll(sessionId, frame) {
+    let win;
+    try {
+      win = frame.contentWindow;
+    } catch (error) {
+      return;
+    }
+    if (!win) return;
+
+    const previous = frameWheelBindings.get(frame);
+    if (previous) {
+      previous.win.removeEventListener("wheel", previous.listener, { capture: true });
+    }
+
+    const listener = (event) => {
+      if (sessionId !== activeId) return;
+      handleHistoryWheel(event, { blockTerminalHandlers: true });
+    };
+    frameWheelBindings.set(frame, { win, listener });
+    win.addEventListener("wheel", listener, { capture: true, passive: false });
   }
 
   async function postKey(key) {
@@ -404,8 +461,7 @@
   });
 
   historyScrollbar.addEventListener("wheel", (event) => {
-    event.preventDefault();
-    postScroll(event.deltaY < 0 ? "line-up" : "line-down", { amount: 5 });
+    handleHistoryWheel(event);
   }, { passive: false });
 
   scrollTopButton.addEventListener("click", () => postScroll("top"));

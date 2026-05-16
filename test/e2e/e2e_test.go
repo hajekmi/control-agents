@@ -68,7 +68,7 @@ func TestRealTmuxAndTtydSessionAppears(t *testing.T) {
 
 	waitForSession(t, ctx, client, port, sessionName)
 	assertTmuxWindowSize(t, sessionName, "largest")
-	assertTmuxMouse(t, sessionName, "on")
+	assertTmuxMouse(t, sessionName, "off")
 	assertTmuxOption(t, sessionName, "status-left-length", "80")
 	assertTmuxOption(t, sessionName, "status-left", "["+sessionName+"] ")
 	assertTmuxOption(t, sessionName, "status-right", "#{pane_current_path}")

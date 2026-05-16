@@ -1,0 +1,11 @@
+{
+  "name": "control-agents",
+  "private": true,
+  "scripts": {
+    "test:browser": "mkdir -p .cache/tmp .cache/go-build .cache/go-tmp .cache/tmux && chmod 700 .cache/tmux && TMPDIR=$PWD/.cache/tmp GOCACHE=$PWD/.cache/go-build GOTMPDIR=$PWD/.cache/go-tmp TMUX_TMPDIR=$PWD/.cache/tmux playwright test",
+    "test:browser:headed": "mkdir -p .cache/tmp .cache/go-build .cache/go-tmp .cache/tmux && chmod 700 .cache/tmux && TMPDIR=$PWD/.cache/tmp GOCACHE=$PWD/.cache/go-build GOTMPDIR=$PWD/.cache/go-tmp TMUX_TMPDIR=$PWD/.cache/tmux playwright test --headed"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0"
+  }
+}

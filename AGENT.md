@@ -30,15 +30,19 @@ documentation. Keep this file focused on working rules for future agents.
   tmux window larger than a small browser viewport. When status is enabled,
   subtract the tmux status line from client height before calculating bottom
   offsets, otherwise the prompt can end up hidden behind the status line.
+- The parent app also captures vertical wheel events over the same-origin ttyd
+  iframe and routes them through the same tmux-scroll API. Keep text selection
+  working by leaving tmux mouse mode off by default.
 - Do not expose per-session `ttyd` TCP ports. `ttyd` must stay behind Unix
   sockets in the shared state directory.
 - Only wrapper-started sessions should appear in the UI unless the user changes
   that requirement.
 - Preserve the default tmux `window-size largest` behavior unless changing it is
   the purpose of the task.
-- Preserve the default tmux `mouse on` behavior unless changing it is the
-  purpose of the task. It lets browser wheel input scroll tmux pane history
-  instead of sending arrow-key events to the shell prompt.
+- Preserve the default tmux `mouse off` behavior unless changing it is the
+  purpose of the task. It keeps normal terminal text selection from being
+  intercepted by tmux; users can set `MIRROR_TMUX_MOUSE=on` only when they
+  prefer tmux to own all mouse handling.
 - Preserve the managed tmux status line shape: `status-left` session label,
   `status-right` current pane path, no hostname/date/time.
 - Preserve `MIRROR_WEB_SCROLLBACK_LINES` as the browser scrollback control.
@@ -70,6 +74,9 @@ documentation. Keep this file focused on working rules for future agents.
 - Run `make test` after code changes.
 - Run `make test-e2e` when changing `bin/control-agents`, tmux behavior, `ttyd`
   startup, registry compatibility, or proxy routing.
+- Run `make test-browser` when changing browser UI behavior, iframe terminal
+  interaction, authentication flows, special key controls, or scrollbar/wheel
+  behavior.
 - The Makefile intentionally sets workspace-local Go caches, `TMUX_TMPDIR`, cgo
   off, and `GOFLAGS=-buildvcs=false` for restricted execution environments.
 
