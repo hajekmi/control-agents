@@ -97,6 +97,41 @@ test("authenticates, renders registered terminal, sends special keys, and logs o
   const terminalFrame = page.locator(`iframe[title="${sessionName}"]`);
   await expect(terminalFrame).toBeVisible();
   await expect.poll(() => terminalFrame.getAttribute("src")).toContain(`/terminal/${encodeURIComponent(sessionName)}/`);
+  await waitForTerminalFrame(page);
+
+  await page.getByRole("button", { name: "Menu" }).click();
+  await page.getByRole("button", { name: "Resize" }).click();
+  const resizePanel = page.getByRole("dialog", { name: /resize/i });
+  await expect(resizePanel).toBeVisible();
+  await expect(resizePanel.getByLabel("Off")).toBeVisible();
+  await expect(resizePanel.getByLabel("Automatic smallest")).toBeVisible();
+  await expect(resizePanel.getByLabel("Follow web window")).toBeVisible();
+  await expect(resizePanel.getByLabel("Follow primary SSH/tmux")).toBeVisible();
+
+  const currentViewer = await waitForActiveResizeViewer(page);
+  const webResizeRequest = await applyResizeMode(page, "Follow web window");
+  expect(webResizeRequest.postDataJSON()).toEqual({ mode: "web", viewerId: currentViewer.id });
+  await expect.poll(() => tmuxWindowSizeOption(sessionName)).toBe("manual");
+
+  const smallestResizeRequest = await applyResizeMode(page, "Automatic smallest");
+  expect(smallestResizeRequest.postDataJSON()).toEqual({ mode: "smallest" });
+  await expect.poll(() => tmuxWindowSizeOption(sessionName)).toBe("smallest");
+
+  const offResizeRequest = await applyResizeMode(page, "Off");
+  expect(offResizeRequest.postDataJSON()).toEqual({ mode: "off" });
+  expect(tmuxWindowSizeOption(sessionName)).not.toBe("latest");
+
+  const controlClient = await attachControlClient(sessionName, "82,21");
+  try {
+    const primaryResizeRequest = await applyResizeMode(page, "Follow primary SSH/tmux");
+    expect(primaryResizeRequest.postDataJSON()).toEqual({ mode: "primary" });
+    await expect.poll(() => tmuxWindowSizeOption(sessionName)).toBe("manual");
+    await expect.poll(() => tmuxWindowSize(sessionName)).toEqual({ width: 82, height: 21 });
+  } finally {
+    detachControlClient(controlClient);
+  }
+  await page.getByLabel("Close resize settings").click();
+  run("tmux", ["set-option", "-w", "-t", `${sessionName}:`, "window-size", "smallest"]);
 
   await page.getByRole("button", { name: "Menu" }).click();
   await page.getByRole("button", { name: "Keys" }).click();
@@ -172,9 +207,11 @@ test("terminal wheel and scrollbar controls route through tmux scroll API", asyn
   }).toBe(true);
 
   const before = await scrollState(page);
-  const scrollRequest = page.waitForRequest((request) => {
+  const isScrollRequest = (request) => {
     return request.method() === "POST" && request.url().includes(`/api/sessions/${encodeURIComponent(sessionName)}/scroll`);
-  });
+  };
+  const scrollRequest = page.waitForRequest(isScrollRequest);
+  const scrollResponse = page.waitForResponse((response) => isScrollRequest(response.request()));
 
   await frame.evaluate(() => {
     window.dispatchEvent(new WheelEvent("wheel", {
@@ -187,9 +224,24 @@ test("terminal wheel and scrollbar controls route through tmux scroll API", asyn
 
   const request = await scrollRequest;
   expect(request.postDataJSON()).toMatchObject({ action: "line-up" });
+  expect((await scrollResponse).status()).toBe(200);
 
   await expect.poll(async () => (await scrollState(page)).scrollTop).toBeLessThan(before.scrollTop);
   await expect.poll(async () => Number(await page.locator("#history-track").getAttribute("aria-valuenow"))).toBeLessThan(before.scrollTop);
+});
+
+test("tracks local visual viewport changes without applying tmux resize", async ({ page }) => {
+  await login(page);
+  await waitForTerminalFrame(page);
+
+  const beforeMode = tmuxWindowSizeOption(sessionName);
+  const initialHeight = await appViewportHeight(page);
+  await expect.poll(() => cssAppViewportHeight(page)).toBe(initialHeight);
+
+  await page.setViewportSize({ width: 390, height: 560 });
+  const resizedHeight = await appViewportHeight(page);
+  await expect.poll(() => cssAppViewportHeight(page)).toBe(resizedHeight);
+  expect(tmuxWindowSizeOption(sessionName)).toBe(beforeMode);
 });
 
 test("keeps fullscreen tmux apps visible when an SSH-sized client is smaller than the browser", async ({ page }) => {
@@ -228,6 +280,63 @@ async function scrollState(page) {
     }
     return response.json();
   }, sessionName);
+}
+
+async function resizeState(page) {
+  return page.evaluate(async (session) => {
+    const response = await fetch(`/api/sessions/${encodeURIComponent(session)}/resize`, {
+      credentials: "same-origin"
+    });
+    if (!response.ok) {
+      throw new Error(`resize state failed: ${response.status}`);
+    }
+    return response.json();
+  }, sessionName);
+}
+
+async function waitForActiveResizeViewer(page) {
+  await expect.poll(async () => {
+    const state = await resizeState(page);
+    return (state.viewers || []).filter((viewer) => viewer.active && viewer.width > 0 && viewer.height > 0).length;
+  }).toBeGreaterThan(0);
+  const state = await resizeState(page);
+  return state.viewers.find((viewer) => viewer.active && viewer.width > 0 && viewer.height > 0);
+}
+
+async function applyResizeMode(page, label) {
+  await page.getByLabel(label).check();
+  const apply = page.getByRole("button", { name: "Apply" });
+  await expect(apply).toBeEnabled();
+  const resizeRequest = waitForResizeApply(page);
+  await apply.click();
+  const { request, response } = await resizeRequest;
+  expect(response.status()).toBe(200);
+  return request;
+}
+
+async function waitForResizeApply(page) {
+  const isResizeApply = (candidate) => {
+    return candidate.method() === "POST" &&
+      candidate.url().endsWith(`/api/sessions/${encodeURIComponent(sessionName)}/resize`);
+  };
+  const requestPromise = page.waitForRequest(isResizeApply);
+  const responsePromise = page.waitForResponse((candidate) => isResizeApply(candidate.request()));
+  const [request, response] = await Promise.all([requestPromise, responsePromise]);
+  return { request, response };
+}
+
+async function appViewportHeight(page) {
+  return page.evaluate(() => {
+    const viewport = window.visualViewport;
+    return Math.round(viewport && viewport.height > 0 ? viewport.height : window.innerHeight);
+  });
+}
+
+async function cssAppViewportHeight(page) {
+  return page.evaluate(() => {
+    const raw = window.getComputedStyle(document.documentElement).getPropertyValue("--app-viewport-height");
+    return Math.round(Number.parseFloat(raw));
+  });
 }
 
 async function waitForTerminalFrame(page) {
@@ -317,6 +426,10 @@ function tmuxWindowSize(session) {
     width: Number.parseInt(width, 10),
     height: Number.parseInt(height, 10)
   };
+}
+
+function tmuxWindowSizeOption(session) {
+  return run("tmux", ["show-options", "-w", "-v", "-t", `${session}:`, "window-size"]).trim();
 }
 
 function tmuxWindowCount(session) {

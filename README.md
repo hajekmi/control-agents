@@ -67,7 +67,7 @@ Run browser E2E checks with Playwright:
 make test-browser
 ```
 
-These tests start the Go server, create a real tmux/ttyd session through `bin/control-agents`, log in through Chromium, and verify the tabbed UI, terminal iframe, special keys panel, logout flow, right-side history controls, and wheel scrolling over the terminal iframe.
+These tests start the Go server, create a real tmux/ttyd session through `bin/control-agents`, log in through Chromium, and verify the tabbed UI, terminal iframe, special keys panel, configurable resize-source panel, local visual viewport tracking, logout flow, right-side history controls, and wheel scrolling over the terminal iframe.
 They also cover the T-Control panel for listing tmux windows, creating/selecting a tmux window through the web UI, and showing the compact tmux-window count badge on session tabs when a session has more than one tmux window.
 
 ## Versioning
@@ -158,7 +158,7 @@ Keep `MIRROR_STATE_DIR` reasonably short. Unix domain socket paths have a small 
 
 Because the browser is attached to tmux, `control-agents` keeps `MIRROR_TMUX_MOUSE=off` by default so normal terminal text selection works without tmux intercepting mouse drag. The parent web app captures vertical wheel events over the terminal iframe and sends them to the tmux scroll API, so the right-side history scrollbar moves without sending arrow-key events to the shell prompt. Start or refresh a session with `MIRROR_TMUX_MOUSE=on` only if you prefer tmux to own all mouse handling.
 
-The default `MIRROR_TMUX_WINDOW_SIZE=smallest` keeps browser and SSH clients on the same full tmux screen, which is important for fullscreen terminal apps such as Midnight Commander. If you override this to `largest`, the right-side web scrollbar also accounts for tmux client window offset when a smaller browser or SSH client is panned inside a taller tmux window. The server accounts for tmux's status line when calculating the visible pane height so returning the scrollbar to the bottom lands back on the live prompt, not behind the status line.
+The default `MIRROR_TMUX_WINDOW_SIZE=smallest` keeps browser and SSH clients on the same full tmux screen, which is important for fullscreen terminal apps such as Midnight Commander. The web Resize panel can override the active session's live resize source without changing this startup default. If you override the wrapper default to `largest`, `latest`, or `manual`, the right-side web scrollbar also accounts for tmux client window offset when a smaller browser or SSH client is panned inside a taller tmux window. The server accounts for tmux's status line when calculating the visible pane height so returning the scrollbar to the bottom lands back on the live prompt, not behind the status line.
 
 `control-agents` also sets a compact tmux status line for managed sessions. The left side shows the session label, for example `[ahoj]` when started with `bin/control-agents ahoj`, and the right side shows the current pane directory through `#{pane_current_path}` without hostname, date, or time. Override the label with `MIRROR_APP_NAME`.
 
@@ -179,6 +179,9 @@ Authenticated routes:
 - `GET /api/sessions/{session}/scroll`: returns tmux history scrollbar state for the active pane.
 - `POST /api/sessions/{session}/scroll`: scrolls tmux history. Body actions are `line-up`, `line-down`, `page-up`, `page-down`, `top`, `bottom`, or `set`.
 - `POST /api/sessions/{session}/keys`: sends a special key to the active tmux pane. Body key values include `ctrl-c`, `ctrl-d`, `ctrl-z`, `ctrl-l`, `escape`, `tab`, `enter`, arrows, `home`, `end`, `page-up`, and `page-down`.
+- `POST /api/sessions/{session}/resize/viewer`: records a browser tab/window resize heartbeat. Body: `{ "viewerId": "browser-tab-id", "width": 120, "height": 32, "transient": false }`. A transient heartbeat updates viewer liveness but does not auto-apply web-follow resize.
+- `GET /api/sessions/{session}/resize`: returns resize state: selected mode, selected browser viewer, active browser viewers, primary tmux client metadata, and the last applied size when available.
+- `POST /api/sessions/{session}/resize`: stores and applies the selected resize mode. Body: `{ "mode": "off|smallest|web|primary", "viewerId": "browser-tab-id" }`; `viewerId` is required only for explicit web-viewer mode.
 - `GET /api/sessions/{session}/tmux-control`: lists tmux windows for the session.
 - `POST /api/sessions/{session}/tmux-control`: runs an allowlisted tmux control action such as `new-window`, `select-window`, `next-window`, `previous-window`, `split-horizontal`, `split-vertical`, pane selection/resizing, `choose-window`, or `command-prompt`.
 - `GET /terminal/{session}/...`: reverse proxies HTTP and WebSocket traffic to the matching `ttyd` Unix socket.
@@ -230,6 +233,51 @@ Example special key command:
 }
 ```
 
+Example resize state:
+
+```json
+{
+  "mode": "web",
+  "selectedViewerId": "viewer-7f3d",
+  "viewers": [
+    {
+      "id": "viewer-7f3d",
+      "ip": "203.0.113.10",
+      "userAgent": "Mozilla/5.0 ...",
+      "width": 132,
+      "height": 36,
+      "lastSeen": "2026-05-16T12:34:56Z",
+      "active": true
+    }
+  ],
+  "primaryClient": {
+    "name": "/dev/pts/2",
+    "width": 100,
+    "height": 28,
+    "activity": 1778944495,
+    "web": false
+  },
+  "applied": {
+    "mode": "web",
+    "width": 132,
+    "height": 36
+  }
+}
+```
+
+Each browser tab stores its own `viewerId` in `sessionStorage` and sends periodic resize heartbeats with the current terminal size. The Resize panel identifies web viewers by browser/IP, terminal size, and last-seen time so users can choose the intended tab when multiple web windows are open.
+
+On mobile Safari/iOS, the page also tracks `visualViewport` changes from the software keyboard. This is local layout handling only: the web terminal iframe is refit above the keyboard and the tab heartbeat is refreshed as transient, so tmux resize mode is not changed unless the user explicitly applies a Resize panel mode.
+
+Resize modes:
+
+- `Off`: stores the setting and avoids applying a tmux resize.
+- `Automatic smallest`: applies tmux `window-size smallest`, letting tmux pick the smallest attached client.
+- `Follow web window`: applies manual tmux sizing from the selected browser viewer. This keeps the chosen browser tab authoritative until another mode is selected.
+- `Follow primary SSH/tmux`: applies manual tmux sizing from the primary non-web tmux client when one is available, so an SSH/tmux attachment can drive the shared size.
+
+Explicit `web` and `primary` modes use tmux manual sizing. They must not set `window-size latest`. `smallest` is the only resize mode that should set `window-size smallest`, and `off` should not force a resize.
+
 Example T-Control command:
 
 ```json
@@ -240,6 +288,8 @@ Example T-Control command:
 ```
 
 T-Control intentionally uses an action allowlist instead of accepting arbitrary tmux commands from the browser. The web panel shows tmux windows, lets users switch windows, and exposes common window/pane controls.
+
+The main menu also includes `Resize`, which opens the resize-source panel. From there users can turn automatic resize management off, choose tmux's automatic smallest-client behavior, follow a selected web browser viewer, or follow the primary SSH/tmux client.
 
 ## systemd User Service
 
@@ -329,7 +379,7 @@ ssh -L 8080:127.0.0.1:8080 user@vm
 - No tabs appear but `<state-dir>/sockets/<session>.sock` exists: reinstall and restart the systemd unit so the service gets the managed `PATH` that includes Homebrew `tmux`.
 - Tab opens but terminal is unavailable: check `<state-dir>/logs/<session>.log` for `ttyd` errors.
 - Session disappears: the service removes stale registry files when the `ttyd` PID, tmux session, or Unix socket is gone.
-- Browser and SSH sizes differ: both clients attach to the same tmux session. The wrapper sets tmux `window-size` to `smallest` by default so fullscreen apps render the same complete screen in every client. Override with `MIRROR_TMUX_WINDOW_SIZE=largest`, `latest`, or `manual` only if you prefer different resize behavior.
+- Browser and SSH sizes differ: both clients attach to the same tmux session. The wrapper sets tmux `window-size` to `smallest` by default so fullscreen apps render the same complete screen in every client. Use Menu -> Resize to choose whether the session should stay off, use automatic smallest-client sizing, follow a browser viewer, or follow the primary SSH/tmux client. Explicit web and primary modes use tmux manual sizing, not `window-size latest`.
 - Browser history is too short while the web tab is connected: increase `MIRROR_WEB_SCROLLBACK_LINES` before starting `bin/control-agents <name>`, then reconnect the web tab.
 - Mouse wheel cycles shell command history: reinstall and restart the service so the current web UI captures terminal wheel events. Use the right-side web scrollbar on browsers where iframe wheel handling is unreliable.
 - Use the right-side web scrollbar to scroll tmux pane history and small-client live-window overflow directly.

@@ -13,6 +13,7 @@
   const actionsPopover = document.getElementById("actions-popover");
   const keysToggle = document.getElementById("keys-toggle");
   const tControlToggle = document.getElementById("tcontrol-toggle");
+  const resizeToggle = document.getElementById("resize-toggle");
   const versionBadge = document.getElementById("version-badge");
   const keyPanel = document.getElementById("key-panel");
   const keysClose = document.getElementById("keys-close");
@@ -21,6 +22,13 @@
   const tControlClose = document.getElementById("tcontrol-close");
   const tControlWindows = document.getElementById("tcontrol-windows");
   const tControlGrid = document.getElementById("tcontrol-grid");
+  const resizePanel = document.getElementById("resize-panel");
+  const resizeClose = document.getElementById("resize-close");
+  const resizeModes = document.getElementById("resize-modes");
+  const resizeViewers = document.getElementById("resize-viewers");
+  const resizePrimary = document.getElementById("resize-primary");
+  const resizeStatus = document.getElementById("resize-status");
+  const resizeApply = document.getElementById("resize-apply");
   const frames = new Map();
   const specialKeys = [
     { key: "ctrl-c", label: "Ctrl+C", title: "Interrupt", urgent: true },
@@ -74,7 +82,37 @@
   let dragging = false;
   let pendingSetTimer = 0;
   let pendingTerminalRepaintTimer = 0;
+  let pendingViewportResizeTimers = [];
+  let pendingViewerHeartbeatTimer = 0;
+  let appViewportTransient = false;
+  let viewerHeartbeatInFlight = false;
+  let lastResizeViewerHeartbeatError = "";
+  let resizeState = { mode: "off", selectedViewerId: "", viewers: [], primaryClient: null, applied: null };
+  let resizeDraftMode = "off";
+  let resizeDraftViewerId = "";
+  let resizeApplying = false;
   const frameWheelBindings = new WeakMap();
+  const resizeViewerId = getResizeViewerId();
+
+  function getResizeViewerId() {
+    const key = "control-agents.resizeViewerId";
+    try {
+      const existing = window.sessionStorage.getItem(key);
+      if (existing) return existing;
+      const next = createId("viewer");
+      window.sessionStorage.setItem(key, next);
+      return next;
+    } catch (error) {
+      return createId("viewer");
+    }
+  }
+
+  function createId(prefix) {
+    if (window.crypto && typeof window.crypto.randomUUID === "function") {
+      return `${prefix}-${window.crypto.randomUUID()}`;
+    }
+    return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  }
 
   function setHeartbeat(state) {
     heartbeat.dataset.state = state;
@@ -144,7 +182,8 @@
     }
   }
 
-  function activate(id) {
+  function activate(id, sessionChanged) {
+    const changed = Boolean(sessionChanged) || activeId !== id;
     activeId = id;
     for (const button of tabs.querySelectorAll("button")) {
       button.classList.toggle("active", button.dataset.sessionId === id);
@@ -160,9 +199,15 @@
     if (!tControlPanel.hidden) {
       refreshTmuxControl();
     }
+    if (changed && !resizePanel.hidden) {
+      postResizeViewerHeartbeat().finally(refreshResizeSettings);
+    } else if (changed) {
+      scheduleResizeViewerHeartbeat(100);
+    }
   }
 
   function render(sessions) {
+    const previousActiveId = activeId;
     const nextIds = new Set(sessions.map((session) => session.id));
     for (const [id, frame] of frames.entries()) {
       if (!nextIds.has(id)) {
@@ -187,7 +232,12 @@
         frame.title = session.name || session.id;
         frame.src = `/terminal/${encodeURIComponent(session.id)}/`;
         frame.hidden = true;
-        frame.addEventListener("load", () => bindFrameWheelScroll(session.id, frame));
+        frame.addEventListener("load", () => {
+          bindFrameWheelScroll(session.id, frame);
+          if (session.id === activeId) {
+            scheduleResizeViewerHeartbeat(100);
+          }
+        });
         terminalStrip.appendChild(frame);
         frames.set(session.id, frame);
       }
@@ -197,11 +247,14 @@
       activeId = sessions.length > 0 ? sessions[0].id : "";
     }
     if (activeId) {
-      activate(activeId);
+      activate(activeId, activeId !== previousActiveId);
     } else {
       emptyState.hidden = false;
       updateKeyButtons(false);
       updateControlButtons(false);
+      if (!resizePanel.hidden) {
+        refreshResizeSettings();
+      }
     }
   }
 
@@ -255,6 +308,50 @@
         }
       });
     });
+  }
+
+  function updateAppViewportMetrics() {
+    const viewport = window.visualViewport;
+    const height = viewport && viewport.height > 0 ? viewport.height : window.innerHeight;
+    const offsetTop = viewport && viewport.offsetTop > 0 ? viewport.offsetTop : 0;
+    if (height > 0) {
+      document.documentElement.style.setProperty("--app-viewport-height", `${Math.round(height)}px`);
+    }
+    const layoutHeight = Math.max(
+      height || 0,
+      window.innerHeight || 0,
+      document.documentElement.clientHeight || 0
+    );
+    const keyboardBottomOffset = Math.max(0, Math.round(layoutHeight - height - offsetTop));
+    appViewportTransient = Boolean(viewport) && keyboardBottomOffset > 80;
+    document.documentElement.style.setProperty("--keyboard-bottom-offset", `${keyboardBottomOffset}px`);
+  }
+
+  function handleAppViewportChange() {
+    updateAppViewportMetrics();
+    updateScrollUI(scrollState);
+    requestTerminalResize();
+    scheduleResizeViewerHeartbeat(450);
+    for (const timer of pendingViewportResizeTimers) {
+      window.clearTimeout(timer);
+    }
+    pendingViewportResizeTimers = [80, 180, 360].map((delay) => {
+      return window.setTimeout(() => {
+        updateAppViewportMetrics();
+        updateScrollUI(scrollState);
+        requestTerminalResize();
+        scheduleResizeViewerHeartbeat(450);
+      }, delay);
+    });
+  }
+
+  function installAppViewportTracking() {
+    updateAppViewportMetrics();
+    window.addEventListener("resize", handleAppViewportChange);
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener("resize", handleAppViewportChange);
+      window.visualViewport.addEventListener("scroll", handleAppViewportChange);
+    }
   }
 
   function scheduleLiveTerminalRepaint() {
@@ -422,6 +519,365 @@
     }
   }
 
+  async function fetchResizeSettings() {
+    if (!activeId) return null;
+    const response = await fetch(`/api/sessions/${encodeURIComponent(activeId)}/resize`, { credentials: "same-origin" });
+    if (response.status === 401) {
+      window.location.href = "/login";
+      return null;
+    }
+    if (!response.ok) {
+      throw new Error(`resize state request failed: ${response.status}`);
+    }
+    return response.json();
+  }
+
+  async function postResizeSettings(mode, viewerId) {
+    if (!activeId) return null;
+    const body = { mode };
+    if (mode === "web" && viewerId) {
+      body.viewerId = viewerId;
+    }
+    const response = await fetch(`/api/sessions/${encodeURIComponent(activeId)}/resize`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify(body)
+    });
+    if (response.status === 401) {
+      window.location.href = "/login";
+      return null;
+    }
+    if (!response.ok) {
+      throw new Error(`resize apply request failed: ${response.status}`);
+    }
+    if (response.status === 204) return null;
+    return response.json().catch(() => null);
+  }
+
+  async function refreshResizeSettings() {
+    updateResizeControls(true);
+    setResizeStatus(activeId ? "Loading..." : "No active session");
+    if (!activeId) {
+      resizeState = normalizeResizeState(null);
+      resizeDraftMode = resizeState.mode;
+      resizeDraftViewerId = "";
+      renderResizeSettings();
+      setResizeStatus("No active session");
+      updateResizeControls(false);
+      return;
+    }
+    try {
+      resizeState = normalizeResizeState(await fetchResizeSettings());
+      resizeDraftMode = resizeState.mode;
+      resizeDraftViewerId = selectResizeViewerId(resizeState.selectedViewerId, resizeState.viewers);
+      renderResizeSettings();
+      setResizeStatus("");
+    } catch (error) {
+      console.error(error);
+      resizeState = normalizeResizeState(resizeState);
+      renderResizeSettings();
+      setResizeStatus("Resize API unavailable");
+    } finally {
+      updateResizeControls(false);
+    }
+  }
+
+  async function applyResizeSettings() {
+    if (!activeId || resizeApplying) return;
+    if (resizeDraftMode === "web" && !resizeDraftViewerId) {
+      setResizeStatus("Select a web window");
+      return;
+    }
+    resizeApplying = true;
+    updateResizeControls(true);
+    setResizeStatus("Applying...");
+    try {
+      const applied = await postResizeSettings(resizeDraftMode, resizeDraftViewerId);
+      if (applied) {
+        resizeState = normalizeResizeState(applied);
+      } else {
+        resizeState = normalizeResizeState(await fetchResizeSettings());
+      }
+      resizeDraftMode = resizeState.mode;
+      resizeDraftViewerId = selectResizeViewerId(resizeState.selectedViewerId, resizeState.viewers);
+      renderResizeSettings();
+      requestTerminalResize();
+      window.setTimeout(requestTerminalResize, 150);
+      refreshScrollState();
+      setResizeStatus("");
+    } catch (error) {
+      console.error(error);
+      setResizeStatus("Apply failed");
+    } finally {
+      resizeApplying = false;
+      updateResizeControls(false);
+    }
+  }
+
+  function normalizeResizeState(payload) {
+    const safe = payload && typeof payload === "object" ? payload : {};
+    const mode = ["off", "smallest", "web", "primary"].includes(safe.mode) ? safe.mode : "off";
+    const viewers = Array.isArray(safe.viewers) ? safe.viewers.map(normalizeResizeViewer).filter(Boolean) : [];
+    return {
+      mode,
+      selectedViewerId: typeof safe.selectedViewerId === "string" ? safe.selectedViewerId : "",
+      viewers,
+      primaryClient: safe.primaryClient && typeof safe.primaryClient === "object" ? safe.primaryClient : null,
+      applied: safe.applied || null
+    };
+  }
+
+  function normalizeResizeViewer(viewer) {
+    if (!viewer || typeof viewer !== "object") return null;
+    const id = typeof viewer.id === "string" ? viewer.id : "";
+    if (!id) return null;
+    return {
+      id,
+      ip: typeof viewer.ip === "string" ? viewer.ip : "",
+      userAgent: typeof viewer.userAgent === "string" ? viewer.userAgent : "",
+      width: Number.isFinite(Number(viewer.width)) ? Number(viewer.width) : 0,
+      height: Number.isFinite(Number(viewer.height)) ? Number(viewer.height) : 0,
+      lastSeen: viewer.lastSeen || "",
+      active: viewer.active !== false
+    };
+  }
+
+  function selectResizeViewerId(preferred, viewers) {
+    if (preferred && viewers.some((viewer) => viewer.id === preferred)) return preferred;
+    const current = viewers.find((viewer) => viewer.id === resizeViewerId);
+    if (current) return current.id;
+    const activeViewer = viewers.find((viewer) => viewer.active);
+    if (activeViewer) return activeViewer.id;
+    return viewers.length ? viewers[0].id : "";
+  }
+
+  function renderResizeSettings() {
+    for (const input of resizeModes.querySelectorAll("input[name='resize-mode']")) {
+      const selected = input.value === resizeDraftMode;
+      input.checked = selected;
+      const label = input.closest(".resize-mode-option");
+      if (label) {
+        label.classList.toggle("selected", selected);
+      }
+    }
+    renderResizeViewers();
+    renderResizePrimary();
+    updateResizeControls(resizeApplying);
+  }
+
+  function renderResizeViewers() {
+    resizeViewers.replaceChildren();
+    const viewers = [...resizeState.viewers].sort((left, right) => {
+      if (left.id === resizeViewerId) return -1;
+      if (right.id === resizeViewerId) return 1;
+      if (left.active !== right.active) return left.active ? -1 : 1;
+      return String(right.lastSeen).localeCompare(String(left.lastSeen));
+    });
+    if (!viewers.length) {
+      const empty = document.createElement("div");
+      empty.className = "resize-empty";
+      empty.textContent = "No web windows";
+      resizeViewers.appendChild(empty);
+      return;
+    }
+    for (const viewer of viewers) {
+      const label = document.createElement("label");
+      label.className = "resize-viewer";
+      label.classList.toggle("inactive", !viewer.active);
+      label.classList.toggle("selected", viewer.id === resizeDraftViewerId);
+      label.title = viewer.userAgent || viewer.id;
+
+      const input = document.createElement("input");
+      input.type = "radio";
+      input.name = "resize-viewer";
+      input.value = viewer.id;
+      input.checked = viewer.id === resizeDraftViewerId;
+      label.appendChild(input);
+
+      const body = document.createElement("span");
+      body.className = "resize-viewer-body";
+
+      const main = document.createElement("span");
+      main.className = "resize-viewer-main";
+      main.textContent = summarizeUserAgent(viewer.userAgent) || viewer.id;
+      if (viewer.id === resizeViewerId) {
+        const badge = document.createElement("span");
+        badge.className = "resize-current-badge";
+        badge.textContent = "current";
+        main.appendChild(badge);
+      }
+      body.appendChild(main);
+
+      const meta = document.createElement("span");
+      meta.className = "resize-viewer-meta";
+      meta.textContent = [viewer.ip, formatDimensions(viewer.width, viewer.height), formatLastSeen(viewer.lastSeen), viewer.active ? "" : "inactive"].filter(Boolean).join(" | ");
+      body.appendChild(meta);
+
+      label.appendChild(body);
+      resizeViewers.appendChild(label);
+    }
+  }
+
+  function renderResizePrimary() {
+    resizePrimary.replaceChildren();
+    if (!resizeState.primaryClient) {
+      const empty = document.createElement("div");
+      empty.className = "resize-empty";
+      empty.textContent = "No primary client";
+      resizePrimary.appendChild(empty);
+      return;
+    }
+    const primary = resizeState.primaryClient;
+    const row = document.createElement("div");
+    row.className = "resize-primary-row";
+
+    const name = document.createElement("div");
+    name.className = "resize-primary-name";
+    name.textContent = primary.name || "Primary client";
+    row.appendChild(name);
+
+    const meta = document.createElement("div");
+    meta.className = "resize-primary-meta";
+    meta.textContent = [formatDimensions(primary.width, primary.height), primary.activity ? `activity ${primary.activity}` : ""].filter(Boolean).join(" | ");
+    row.appendChild(meta);
+
+    resizePrimary.appendChild(row);
+  }
+
+  function updateResizeControls(loading) {
+    const disabled = loading || resizeApplying || !activeId;
+    for (const input of resizeModes.querySelectorAll("input")) {
+      input.disabled = disabled;
+      const label = input.closest(".resize-mode-option");
+      if (label) {
+        label.classList.toggle("disabled", disabled);
+      }
+    }
+    for (const input of resizeViewers.querySelectorAll("input")) {
+      const viewerDisabled = disabled || resizeDraftMode !== "web";
+      input.disabled = viewerDisabled;
+      const label = input.closest(".resize-viewer");
+      if (label) {
+        label.classList.toggle("disabled", viewerDisabled);
+      }
+    }
+    resizeApply.disabled = disabled || (resizeDraftMode === "web" && !resizeDraftViewerId);
+  }
+
+  function setResizeStatus(message) {
+    resizeStatus.textContent = message || "";
+  }
+
+  function summarizeUserAgent(userAgent) {
+    if (!userAgent) return "";
+    const browser = userAgent.includes("Edg/") ? "Edge"
+      : userAgent.includes("Firefox/") ? "Firefox"
+        : userAgent.includes("Chrome/") || userAgent.includes("Chromium/") ? "Chrome"
+          : userAgent.includes("Safari/") ? "Safari"
+            : "Browser";
+    const os = userAgent.includes("Windows") ? "Windows"
+      : userAgent.includes("Mac OS X") || userAgent.includes("Macintosh") ? "macOS"
+        : userAgent.includes("Android") ? "Android"
+          : userAgent.includes("iPhone") || userAgent.includes("iPad") ? "iOS"
+            : userAgent.includes("Linux") ? "Linux"
+              : "";
+    return [browser, os].filter(Boolean).join(" ");
+  }
+
+  function formatDimensions(width, height) {
+    const cols = Number(width);
+    const rows = Number(height);
+    if (!Number.isFinite(cols) || !Number.isFinite(rows) || cols <= 0 || rows <= 0) return "";
+    return `${Math.round(cols)}x${Math.round(rows)}`;
+  }
+
+  function formatLastSeen(value) {
+    if (!value) return "";
+    const rawTimestamp = typeof value === "number" ? value : Date.parse(value);
+    const timestamp = rawTimestamp > 0 && rawTimestamp < 1000000000000 ? rawTimestamp * 1000 : rawTimestamp;
+    if (!Number.isFinite(timestamp)) return String(value);
+    const seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
+    if (seconds < 5) return "now";
+    if (seconds < 60) return `${seconds}s ago`;
+    const minutes = Math.round(seconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.round(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    return new Date(timestamp).toLocaleString();
+  }
+
+  function scheduleResizeViewerHeartbeat(delay) {
+    window.clearTimeout(pendingViewerHeartbeatTimer);
+    pendingViewerHeartbeatTimer = window.setTimeout(postResizeViewerHeartbeat, delay);
+  }
+
+  async function postResizeViewerHeartbeat() {
+    if (!activeId || viewerHeartbeatInFlight) return;
+    viewerHeartbeatInFlight = true;
+    try {
+      const response = await fetch(`/api/sessions/${encodeURIComponent(activeId)}/resize/viewer`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ viewerId: resizeViewerId, ...getActiveTerminalDimensions(), transient: appViewportTransient })
+      });
+      if (response.status === 401) {
+        window.location.href = "/login";
+        return;
+      }
+      if (!response.ok) {
+        throw new Error(`resize viewer heartbeat failed: ${response.status}`);
+      }
+      lastResizeViewerHeartbeatError = "";
+    } catch (error) {
+      const message = error && error.message ? error.message : String(error);
+      if (message !== lastResizeViewerHeartbeatError) {
+        console.error(error);
+        lastResizeViewerHeartbeatError = message;
+      }
+    } finally {
+      viewerHeartbeatInFlight = false;
+    }
+  }
+
+  function getActiveTerminalDimensions() {
+    const frame = frames.get(activeId);
+    if (!frame) return { width: 0, height: 0 };
+    const terminalSize = readXtermSize(frame);
+    if (terminalSize) return terminalSize;
+    const rect = frame.getBoundingClientRect();
+    return {
+      width: Math.max(0, Math.round(rect.width || frame.clientWidth || 0)),
+      height: Math.max(0, Math.round(rect.height || frame.clientHeight || 0))
+    };
+  }
+
+  function readXtermSize(frame) {
+    try {
+      const win = frame.contentWindow;
+      const candidates = [win.term, win.terminal, win.xterm];
+      for (const terminal of candidates) {
+        const cols = Number(terminal && terminal.cols);
+        const rows = Number(terminal && terminal.rows);
+        if (cols > 0 && rows > 0) {
+          return { width: Math.round(cols), height: Math.round(rows) };
+        }
+      }
+      const rowsElement = frame.contentDocument && frame.contentDocument.querySelector(".xterm-rows");
+      if (!rowsElement) return null;
+      const rowElements = Array.from(rowsElement.children);
+      const rows = rowElements.length;
+      const cols = rowElements.reduce((max, row) => Math.max(max, row.textContent.length), 0);
+      if (cols > 0 && rows > 0) {
+        return { width: cols, height: rows };
+      }
+    } catch (error) {
+      return null;
+    }
+    return null;
+  }
+
   function focusActiveTerminal() {
     const frame = frames.get(activeId);
     if (!frame) return;
@@ -524,6 +980,7 @@
     keysToggle.setAttribute("aria-expanded", String(open));
     if (open) {
       setTControlPanelOpen(false);
+      setResizePanelOpen(false);
       updateKeyButtons(false);
     }
   }
@@ -533,7 +990,18 @@
     tControlToggle.setAttribute("aria-expanded", String(open));
     if (open) {
       setKeyPanelOpen(false);
+      setResizePanelOpen(false);
       refreshTmuxControl();
+    }
+  }
+
+  function setResizePanelOpen(open) {
+    resizePanel.hidden = !open;
+    resizeToggle.setAttribute("aria-expanded", String(open));
+    if (open) {
+      setKeyPanelOpen(false);
+      setTControlPanelOpen(false);
+      postResizeViewerHeartbeat().finally(refreshResizeSettings);
     }
   }
 
@@ -657,8 +1125,29 @@
     setTControlPanelOpen(true);
     setActionsMenuOpen(false);
   });
+  resizeToggle.addEventListener("click", () => {
+    setResizePanelOpen(true);
+    setActionsMenuOpen(false);
+  });
   keysClose.addEventListener("click", () => setKeyPanelOpen(false));
   tControlClose.addEventListener("click", () => setTControlPanelOpen(false));
+  resizeClose.addEventListener("click", () => setResizePanelOpen(false));
+  resizeModes.addEventListener("change", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement) || target.name !== "resize-mode") return;
+    resizeDraftMode = target.value;
+    if (resizeDraftMode === "web" && !resizeDraftViewerId) {
+      resizeDraftViewerId = selectResizeViewerId("", resizeState.viewers);
+    }
+    renderResizeSettings();
+  });
+  resizeViewers.addEventListener("change", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement) || target.name !== "resize-viewer") return;
+    resizeDraftViewerId = target.value;
+    renderResizeSettings();
+  });
+  resizeApply.addEventListener("click", applyResizeSettings);
   document.addEventListener("click", (event) => {
     if (actionsPopover.hidden || actionsMenu.contains(event.target)) return;
     setActionsMenuOpen(false);
@@ -668,16 +1157,15 @@
     setActionsMenuOpen(false);
     setKeyPanelOpen(false);
     setTControlPanelOpen(false);
+    setResizePanelOpen(false);
   });
 
   renderKeyButtons();
   renderControlActions();
+  installAppViewportTracking();
   refreshVersion();
   refresh();
   window.setInterval(refresh, 3000);
   window.setInterval(refreshScrollState, 1500);
-  window.addEventListener("resize", () => {
-    updateScrollUI(scrollState);
-    requestTerminalResize();
-  });
+  window.setInterval(postResizeViewerHeartbeat, 3000);
 })();

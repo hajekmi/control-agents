@@ -226,6 +226,11 @@ func TestParseSessionAPIPath(t *testing.T) {
 		t.Fatalf("id=%q suffix=%q ok=%v", id, suffix, ok)
 	}
 
+	id, suffix, ok = parseSessionAPIPath("/api/sessions/main-1/resize/viewer")
+	if !ok || id != "main-1" || suffix != "resize/viewer" {
+		t.Fatalf("id=%q suffix=%q ok=%v", id, suffix, ok)
+	}
+
 	if _, _, ok := parseSessionAPIPath("/api/sessions/../scroll"); ok {
 		t.Fatal("path traversal id was accepted")
 	}

@@ -17,6 +17,7 @@
           <div id="actions-popover" class="actions-popover" hidden>
             <button type="button" id="keys-toggle" class="action-menu-item" aria-controls="key-panel" aria-expanded="false">Keys</button>
             <button type="button" id="tcontrol-toggle" class="action-menu-item" aria-controls="tcontrol-panel" aria-expanded="false">T-Control</button>
+            <button type="button" id="resize-toggle" class="action-menu-item" aria-controls="resize-panel" aria-expanded="false">Resize</button>
             <form method="post" action="/logout">
               <button type="submit" class="action-menu-item">Sign out</button>
             </form>
@@ -49,6 +50,42 @@
           </div>
           <div id="tcontrol-windows" class="tcontrol-windows"></div>
           <div id="tcontrol-grid" class="key-grid tcontrol-grid"></div>
+        </aside>
+        <aside id="resize-panel" class="key-panel resize-panel" role="dialog" aria-label="Resize settings" hidden>
+          <div class="key-panel-header">
+            <h2>Resize</h2>
+            <button type="button" id="resize-close" class="key-panel-close" title="Close resize settings" aria-label="Close resize settings">x</button>
+          </div>
+          <div id="resize-modes" class="resize-modes" role="radiogroup" aria-label="Tmux resize mode">
+            <label class="resize-mode-option">
+              <input type="radio" name="resize-mode" value="off">
+              <span>Off</span>
+            </label>
+            <label class="resize-mode-option">
+              <input type="radio" name="resize-mode" value="smallest">
+              <span>Automatic smallest</span>
+            </label>
+            <label class="resize-mode-option">
+              <input type="radio" name="resize-mode" value="web">
+              <span>Follow web window</span>
+            </label>
+            <label class="resize-mode-option">
+              <input type="radio" name="resize-mode" value="primary">
+              <span>Follow primary SSH/tmux</span>
+            </label>
+          </div>
+          <section class="resize-section" aria-labelledby="resize-viewers-title">
+            <h3 id="resize-viewers-title">Web windows</h3>
+            <div id="resize-viewers" class="resize-viewers"></div>
+          </section>
+          <section class="resize-section" aria-labelledby="resize-primary-title">
+            <h3 id="resize-primary-title">Primary SSH/tmux</h3>
+            <div id="resize-primary" class="resize-primary"></div>
+          </section>
+          <div class="resize-panel-footer">
+            <div id="resize-status" class="resize-status" role="status" aria-live="polite"></div>
+            <button type="button" id="resize-apply" class="resize-apply">Apply</button>
+          </div>
         </aside>
       </section>
     </main>

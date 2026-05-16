@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -395,16 +396,128 @@ func TestControlRejectsUnsupportedAction(t *testing.T) {
 	}
 }
 
+func TestListResizeClientsClassifiesWebClients(t *testing.T) {
+	runner := &fakeRunner{
+		resizeClients: "/dev/pts/ios|301|80|24|100|on|80|23\n/dev/pts/chrome|402|140|48|200|on|140|47\n/dev/pts/ssh|501|200|60|300|off|200|60\n",
+	}
+	client := NewClientWithRunner(runner)
+	client.processDescendant = func(pid, ancestor int) bool {
+		return (pid == 301 || pid == 402) && ancestor == 300
+	}
+
+	clients, err := client.ListResizeClients(context.Background(), "main", 300)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []ResizeClient{
+		{Name: "/dev/pts/ios", PID: 301, Width: 80, Height: 23, Activity: 100, StatusOn: true, Web: true},
+		{Name: "/dev/pts/chrome", PID: 402, Width: 140, Height: 47, Activity: 200, StatusOn: true, Web: true},
+		{Name: "/dev/pts/ssh", PID: 501, Width: 200, Height: 60, Activity: 300, Web: false},
+	}
+	if !reflect.DeepEqual(clients, want) {
+		t.Fatalf("clients = %#v, want %#v", clients, want)
+	}
+}
+
+func TestPrimaryResizeClientSelectsLatestNonWebClient(t *testing.T) {
+	runner := &fakeRunner{
+		resizeClients: "/dev/pts/ios|301|80|24|100|on|80|23\n/dev/pts/chrome|402|140|48|400|on|140|47\n/dev/pts/ssh-old|501|200|60|300|off|200|60\n/dev/pts/ssh-new|502|160|50|500|off|160|50\n",
+	}
+	client := NewClientWithRunner(runner)
+	client.processDescendant = func(pid, ancestor int) bool {
+		return (pid == 301 || pid == 402) && ancestor == 300
+	}
+
+	primary, err := client.PrimaryResizeClient(context.Background(), "main", 300)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := ResizeClient{Name: "/dev/pts/ssh-new", PID: 502, Width: 160, Height: 50, Activity: 500, Web: false}
+	if primary != want {
+		t.Fatalf("primary = %#v, want %#v", primary, want)
+	}
+}
+
+func TestPrimaryResizeClientFallsBackToWindowHeightForControlClient(t *testing.T) {
+	runner := &fakeRunner{
+		resizeClients: "/dev/console|2|82||500|on|82|21\n",
+	}
+	client := NewClientWithRunner(runner)
+
+	primary, err := client.PrimaryResizeClient(context.Background(), "main", 300)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := ResizeClient{Name: "/dev/console", PID: 2, Width: 82, Height: 21, Activity: 500, StatusOn: true, Web: false}
+	if primary != want {
+		t.Fatalf("primary = %#v, want %#v", primary, want)
+	}
+}
+
+func TestResizeManualSetsManualModeAndDimensions(t *testing.T) {
+	runner := &fakeRunner{}
+	client := NewClientWithRunner(runner)
+
+	state, err := client.ResizeManual(context.Background(), "main", 140, 47)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantState := ResizeState{Mode: "manual", Width: 140, Height: 47}
+	if state != wantState {
+		t.Fatalf("state = %#v, want %#v", state, wantState)
+	}
+	wantCalls := [][]string{
+		{"run", "tmux", "set-option", "-w", "-t", "main:", "window-size", "manual"},
+		{"run", "tmux", "resize-window", "-t", "main:", "-x", "140", "-y", "47"},
+	}
+	if !reflect.DeepEqual(runner.calls, wantCalls) {
+		t.Fatalf("calls = %#v, want %#v", runner.calls, wantCalls)
+	}
+}
+
+func TestResizeSmallestSetsSmallestMode(t *testing.T) {
+	runner := &fakeRunner{}
+	client := NewClientWithRunner(runner)
+
+	state, err := client.ResizeSmallest(context.Background(), "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantState := ResizeState{Mode: "smallest"}
+	if state != wantState {
+		t.Fatalf("state = %#v, want %#v", state, wantState)
+	}
+	wantCalls := [][]string{
+		{"run", "tmux", "set-option", "-w", "-t", "main:", "window-size", "smallest"},
+	}
+	if !reflect.DeepEqual(runner.calls, wantCalls) {
+		t.Fatalf("calls = %#v, want %#v", runner.calls, wantCalls)
+	}
+}
+
 type fakeRunner struct {
-	status   string
-	statuses []string
-	clients  string
-	windows  string
-	calls    [][]string
+	status        string
+	statuses      []string
+	clients       string
+	resizeClients string
+	windows       string
+	calls         [][]string
 }
 
 func (f *fakeRunner) Output(ctx context.Context, name string, args ...string) ([]byte, error) {
 	if len(args) > 0 && args[0] == "list-clients" {
+		if strings.Contains(args[len(args)-1], "#{client_width}") {
+			if f.resizeClients == "" {
+				return nil, errors.New("no resize clients")
+			}
+			f.calls = append(f.calls, append([]string{"output", name}, args...))
+			return []byte(f.resizeClients), nil
+		}
 		if f.clients == "" {
 			return nil, errors.New("no clients")
 		}

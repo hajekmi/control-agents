@@ -30,6 +30,20 @@ documentation. Keep this file focused on working rules for future agents.
   makes the tmux window larger than a browser viewport. When status is enabled,
   subtract the tmux status line from client height before calculating bottom
   offsets, otherwise the prompt can end up hidden behind the status line.
+- The main menu `Resize` action opens the resize-source panel. Preserve the
+  explicit modes: `off`, `smallest`, `web`, and `primary`. Browser tabs report
+  distinct `sessionStorage` viewer IDs through `/resize/viewer` heartbeats, and
+  the panel should identify viewers by browser/IP, size, and last-seen time.
+  `web` follows the selected browser viewer; `primary` follows the primary
+  SSH/tmux client when one is available.
+- Do not reintroduce one-shot resize behavior or `window-size latest` from the
+  Resize menu. Explicit `web` and `primary` modes should use tmux manual
+  sizing, `smallest` should set tmux `window-size smallest`, and `off` should
+  store the setting without applying a resize.
+- iOS software-keyboard handling is local viewport behavior, not a tmux resize
+  mode. Keep `visualViewport` tracking in the web shell so the active iframe
+  shrinks above the keyboard and sends transient viewer heartbeats; do not apply
+  tmux resize settings just because the keyboard opened.
 - The parent app also captures vertical wheel events over the same-origin ttyd
   iframe and routes them through the same tmux-scroll API. Keep text selection
   working by leaving tmux mouse mode off by default.
@@ -81,8 +95,8 @@ documentation. Keep this file focused on working rules for future agents.
 - Run `make test-e2e` when changing `bin/control-agents`, tmux behavior, `ttyd`
   startup, registry compatibility, or proxy routing.
 - Run `make test-browser` when changing browser UI behavior, iframe terminal
-  interaction, authentication flows, special key controls, T-Control actions, or
-  scrollbar/wheel behavior.
+  interaction, authentication flows, special key controls, T-Control actions,
+  resize-source behavior, or scrollbar/wheel behavior.
 - The Makefile intentionally sets workspace-local Go caches, `TMUX_TMPDIR`, cgo
   off, and `GOFLAGS=-buildvcs=false` for restricted execution environments.
 

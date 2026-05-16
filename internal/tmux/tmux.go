@@ -67,6 +67,23 @@ type ControlRequest struct {
 	Name        string `json:"name,omitempty"`
 }
 
+type ResizeState struct {
+	Mode       string `json:"mode,omitempty"`
+	ClientName string `json:"clientName,omitempty"`
+	Width      int    `json:"width,omitempty"`
+	Height     int    `json:"height,omitempty"`
+}
+
+type ResizeClient struct {
+	Name     string `json:"name"`
+	PID      int    `json:"pid,omitempty"`
+	Width    int    `json:"width"`
+	Height   int    `json:"height"`
+	Activity int64  `json:"activity,omitempty"`
+	StatusOn bool   `json:"statusOn,omitempty"`
+	Web      bool   `json:"web"`
+}
+
 var ErrUnsupportedKey = errors.New("unsupported key")
 var ErrUnsupportedControlAction = errors.New("unsupported tmux control action")
 var ErrInvalidControlRequest = errors.New("invalid tmux control request")
@@ -213,6 +230,62 @@ func (c *Client) Control(ctx context.Context, target string, request ControlRequ
 		return nil, err
 	}
 	return c.Windows(ctx, target)
+}
+
+func (c *Client) ListResizeClients(ctx context.Context, target string, processPID int) ([]ResizeClient, error) {
+	views, err := c.resizeClients(ctx, target)
+	if err != nil {
+		return nil, err
+	}
+	clients := make([]ResizeClient, 0, len(views))
+	for _, view := range views {
+		clients = append(clients, c.resizeClientView(view, processPID))
+	}
+	return clients, nil
+}
+
+func (c *Client) PrimaryResizeClient(ctx context.Context, target string, processPID int) (ResizeClient, error) {
+	views, err := c.resizeClients(ctx, target)
+	if err != nil {
+		return ResizeClient{}, err
+	}
+	var best resizeClientView
+	for _, view := range views {
+		if processPID > 0 && c.belongsToProcess(view.pid, processPID) {
+			continue
+		}
+		if betterResizeClient(view, best) {
+			best = view
+		}
+	}
+	if best.name == "" {
+		return ResizeClient{}, errors.New("no primary tmux clients")
+	}
+	return c.resizeClientView(best, processPID), nil
+}
+
+func (c *Client) ResizeManual(ctx context.Context, target string, width, height int) (ResizeState, error) {
+	if width <= 0 || height <= 0 {
+		return ResizeState{}, errors.New("invalid tmux resize dimensions")
+	}
+	if err := c.runner.Run(ctx, "tmux", "set-option", "-w", "-t", target+":", "window-size", "manual"); err != nil {
+		return ResizeState{}, err
+	}
+	if err := c.runner.Run(ctx, "tmux", "resize-window", "-t", target+":", "-x", strconv.Itoa(width), "-y", strconv.Itoa(height)); err != nil {
+		return ResizeState{}, err
+	}
+	return ResizeState{
+		Mode:   "manual",
+		Width:  width,
+		Height: height,
+	}, nil
+}
+
+func (c *Client) ResizeSmallest(ctx context.Context, target string) (ResizeState, error) {
+	if err := c.runner.Run(ctx, "tmux", "set-option", "-w", "-t", target+":", "window-size", "smallest"); err != nil {
+		return ResizeState{}, err
+	}
+	return ResizeState{Mode: "smallest"}, nil
 }
 
 func (c *Client) control(ctx context.Context, target string, request ControlRequest) error {
@@ -511,6 +584,16 @@ type clientView struct {
 	statusOn     bool
 }
 
+type resizeClientView struct {
+	name           string
+	pid            int
+	width          int
+	height         int
+	heightIsWindow bool
+	activity       int64
+	statusOn       bool
+}
+
 func (c *Client) scrollClient(ctx context.Context, target string, processPID int) (clientView, error) {
 	output, err := c.runner.Output(ctx, "tmux", "list-clients", "-t", target, "-F", "#{client_name}|#{client_pid}|#{client_height}|#{window_height}|#{window_offset_y}|#{status}")
 	if err != nil {
@@ -546,6 +629,58 @@ func (c *Client) scrollClient(ctx context.Context, target string, processPID int
 		return clientView{}, errors.New("no tmux clients")
 	}
 	return best, nil
+}
+
+func (c *Client) resizeClients(ctx context.Context, target string) ([]resizeClientView, error) {
+	output, err := c.runner.Output(ctx, "tmux", "list-clients", "-t", target, "-F", "#{client_name}|#{client_pid}|#{client_width}|#{client_height}|#{client_activity}|#{status}|#{window_width}|#{window_height}")
+	if err != nil {
+		return nil, err
+	}
+	views := make([]resizeClientView, 0)
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		view, err := parseResizeClientView(line)
+		if err != nil {
+			continue
+		}
+		if view.name == "" || view.width <= 0 || view.height <= 0 {
+			continue
+		}
+		views = append(views, view)
+	}
+	if len(views) == 0 {
+		return nil, errors.New("no tmux clients")
+	}
+	return views, nil
+}
+
+func (c *Client) resizeClientView(view resizeClientView, processPID int) ResizeClient {
+	return ResizeClient{
+		Name:     view.name,
+		PID:      view.pid,
+		Width:    view.width,
+		Height:   view.visiblePaneHeight(),
+		Activity: view.activity,
+		StatusOn: view.statusOn,
+		Web:      processPID > 0 && c.belongsToProcess(view.pid, processPID),
+	}
+}
+
+func betterResizeClient(candidate, current resizeClientView) bool {
+	if current.name == "" {
+		return true
+	}
+	if candidate.activity != current.activity {
+		return candidate.activity > current.activity
+	}
+	candidateArea := candidate.width * candidate.visiblePaneHeight()
+	currentArea := current.width * current.visiblePaneHeight()
+	if candidateArea != currentArea {
+		return candidateArea > currentArea
+	}
+	return candidate.height > current.height
 }
 
 func (c *Client) belongsToProcess(pid, ancestor int) bool {
@@ -604,6 +739,61 @@ func parseClientView(line string) (clientView, error) {
 	}, nil
 }
 
+func parseResizeClientView(line string) (resizeClientView, error) {
+	parts := strings.Split(strings.TrimSpace(line), "|")
+	if len(parts) != 8 {
+		return resizeClientView{}, errors.New("unexpected tmux resize client format")
+	}
+	pid, err := parseOptionalInt(parts[1])
+	if err != nil {
+		return resizeClientView{}, fmt.Errorf("parse client pid: %w", err)
+	}
+	width, err := parseOptionalInt(parts[2])
+	if err != nil {
+		return resizeClientView{}, fmt.Errorf("parse client width: %w", err)
+	}
+	height, err := parseOptionalInt(parts[3])
+	if err != nil {
+		return resizeClientView{}, fmt.Errorf("parse client height: %w", err)
+	}
+	activity, err := parseOptionalInt64(parts[4])
+	if err != nil {
+		return resizeClientView{}, fmt.Errorf("parse client activity: %w", err)
+	}
+	if pid < 0 {
+		pid = 0
+	}
+	if width < 0 {
+		width = 0
+	}
+	if height < 0 {
+		height = 0
+	}
+	heightIsWindow := false
+	if height == 0 {
+		windowHeight, err := parseOptionalInt(parts[7])
+		if err != nil {
+			return resizeClientView{}, fmt.Errorf("parse window height: %w", err)
+		}
+		if windowHeight < 0 {
+			windowHeight = 0
+		}
+		if windowHeight > 0 {
+			height = windowHeight
+			heightIsWindow = true
+		}
+	}
+	return resizeClientView{
+		name:           parts[0],
+		pid:            pid,
+		width:          width,
+		height:         height,
+		heightIsWindow: heightIsWindow,
+		activity:       activity,
+		statusOn:       strings.EqualFold(parts[5], "on") || parts[5] == "1",
+	}, nil
+}
+
 func (state *ScrollState) applyClientView(view clientView) {
 	if view.name == "" || view.height <= 0 || view.windowHeight <= 0 {
 		return
@@ -645,6 +835,17 @@ func (view clientView) visiblePaneHeight() int {
 	return height
 }
 
+func (view resizeClientView) visiblePaneHeight() int {
+	height := view.height
+	if view.statusOn && !view.heightIsWindow {
+		height--
+	}
+	if height < 1 {
+		return 1
+	}
+	return height
+}
+
 func (state ScrollState) hasClientOverflow() bool {
 	return state.clientName != "" && state.WindowOverflow > 0
 }
@@ -672,6 +873,13 @@ func parseOptionalInt(value string) (int, error) {
 		return 0, nil
 	}
 	return strconv.Atoi(value)
+}
+
+func parseOptionalInt64(value string) (int64, error) {
+	if value == "" {
+		return 0, nil
+	}
+	return strconv.ParseInt(value, 10, 64)
 }
 
 func windowListFormat() string {

@@ -9,6 +9,8 @@
   --danger: #ff7b72;
   --history-scrollbar-width: 28px;
   --terminal-min-width: 900px;
+  --app-viewport-height: 100dvh;
+  --keyboard-bottom-offset: 0px;
 }
 
 * {
@@ -32,6 +34,7 @@ body {
   height: 100vh;
   height: 100svh;
   height: 100dvh;
+  height: var(--app-viewport-height, 100dvh);
   min-height: 0;
 }
 
@@ -478,6 +481,193 @@ button.secondary {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.resize-panel {
+  max-height: min(620px, calc(100% - 20px - env(safe-area-inset-top) - env(safe-area-inset-bottom)));
+  overflow: auto;
+}
+
+.resize-modes {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: 10px;
+}
+
+.resize-mode-option,
+.resize-viewer {
+  align-items: center;
+  background: #191c1f;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.resize-mode-option {
+  min-height: 36px;
+  padding: 0 9px;
+}
+
+.resize-mode-option.selected,
+.resize-viewer.selected {
+  background: #243b3a;
+  border-color: var(--accent);
+}
+
+.resize-mode-option:has(input:checked),
+.resize-viewer:has(input:checked) {
+  background: #243b3a;
+  border-color: var(--accent);
+}
+
+.resize-mode-option input,
+.resize-viewer input {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.resize-mode-option span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.resize-section {
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 6px;
+  padding: 9px 0 0;
+}
+
+.resize-section + .resize-section {
+  margin-top: 9px;
+}
+
+.resize-section h3 {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.2;
+  margin: 0;
+}
+
+.resize-viewers {
+  display: grid;
+  gap: 5px;
+  max-height: 176px;
+  overflow: auto;
+}
+
+.resize-viewer {
+  cursor: pointer;
+  min-height: 48px;
+  padding: 7px 9px;
+}
+
+.resize-viewer.inactive {
+  opacity: 0.62;
+}
+
+.resize-viewer-body {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.resize-viewer-main,
+.resize-viewer-meta,
+.resize-primary-name,
+.resize-primary-meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.resize-viewer-main,
+.resize-primary-name {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  font-weight: 650;
+}
+
+.resize-viewer-meta,
+.resize-primary-meta,
+.resize-empty,
+.resize-status {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.resize-current-badge {
+  border: 1px solid #4db6ac;
+  border-radius: 999px;
+  color: #9ee7df;
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 16px;
+  padding: 0 6px;
+}
+
+.resize-primary-row {
+  background: #191c1f;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  display: grid;
+  gap: 2px;
+  min-height: 44px;
+  min-width: 0;
+  padding: 7px 9px;
+}
+
+.resize-empty {
+  min-height: 30px;
+  padding: 6px 2px 0;
+}
+
+.resize-panel-footer {
+  align-items: center;
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  margin-top: 10px;
+  padding-top: 10px;
+}
+
+.resize-status {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.resize-apply {
+  background: #2d5753;
+  border-color: #4db6ac;
+  flex: 0 0 auto;
+  font-weight: 650;
+  min-width: 86px;
+}
+
+.resize-apply:disabled,
+.resize-mode-option.disabled,
+.resize-viewer.disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.resize-mode-option:has(input:disabled),
+.resize-viewer:has(input:disabled) {
+  cursor: default;
+  opacity: 0.5;
+}
+
 .login-page {
   padding: 0;
 }
@@ -659,6 +849,24 @@ button.secondary {
 
   .tcontrol-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .resize-modes {
+    grid-template-columns: 1fr;
+  }
+
+  .resize-viewers {
+    max-height: 150px;
+  }
+
+  .resize-panel-footer {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 7px;
+  }
+
+  .resize-apply {
+    width: 100%;
   }
 
   .login-panel {

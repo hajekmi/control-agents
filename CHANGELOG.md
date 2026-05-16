@@ -4,6 +4,13 @@ Versions use calendar numbering: `YYYY.M.REVISION`.
 
 ## Unreleased
 
+## 2026.5.10 - 2026-05-16
+
+- Add a `Resize` management panel with Off, Automatic smallest, Follow web window, and Follow primary SSH/tmux modes.
+- Add resize viewer heartbeats and state/API documentation so browser tabs can be selected by viewer ID, browser/IP, size, and last-seen time.
+- Document and test that explicit web and primary resize modes use tmux manual sizing, smallest uses `window-size smallest`, and off avoids applying resize.
+- Track the mobile visual viewport so the web terminal refits above the iOS software keyboard and sends transient heartbeats without changing tmux resize mode.
+
 ## 2026.5.9 - 2026-05-16
 
 - Add a T-Control menu panel with tmux window listing and allowlisted window/pane control actions.
