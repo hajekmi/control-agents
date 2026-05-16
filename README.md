@@ -127,6 +127,8 @@ Keep `MIRROR_STATE_DIR` reasonably short. Unix domain socket paths have a small 
 
 Because the browser is attached to tmux, mouse wheel history is primarily tmux pane history, not xterm.js scrollback. `control-agents` enables `MIRROR_TMUX_MOUSE=on` by default so the wheel scrolls tmux history instead of sending arrow-key events to the shell prompt. Disable it with `MIRROR_TMUX_MOUSE=off` if you prefer the old tmux behavior.
 
+The right-side web scrollbar combines tmux pane history with tmux client window offset. This matters on small screens when `MIRROR_TMUX_WINDOW_SIZE=largest` keeps the tmux window taller than the iOS Safari viewport: the live tmux screen can have vertical overflow even before lines move into tmux history.
+
 `control-agents` also sets a compact tmux status line for managed sessions. The left side shows the session label, for example `[ahoj]` when started with `bin/control-agents ahoj`, and the right side shows the current pane directory through `#{pane_current_path}` without hostname, date, or time. Override the label with `MIRROR_APP_NAME`.
 
 ## API
@@ -185,7 +187,7 @@ Example scroll command:
 }
 ```
 
-`value` is the scrollbar offset from the top of tmux pane history. The bottom position returns to live output.
+`value` is the scrollbar offset from the top of the combined tmux scroll range. The top of the range is tmux pane history, followed by any live-window overflow for small clients. The bottom position returns to live output.
 
 Example special key command:
 
@@ -286,5 +288,5 @@ ssh -L 8080:127.0.0.1:8080 user@vm
 - Browser and SSH sizes differ: both clients attach to the same tmux session. The wrapper sets tmux `window-size` to `largest` by default so browser activity does not constantly resize a larger SSH client. Override with `MIRROR_TMUX_WINDOW_SIZE=latest`, `smallest`, or `manual` if needed.
 - Browser history is too short while the web tab is connected: increase `MIRROR_WEB_SCROLLBACK_LINES` before starting `bin/control-agents <name>`, then reconnect the web tab.
 - Mouse wheel cycles shell command history: make sure the session was started or refreshed with `MIRROR_TMUX_MOUSE=on bin/control-agents <name>`.
-- Use the right-side web scrollbar to scroll tmux pane history on browsers where iframe wheel handling is unreliable.
+- Use the right-side web scrollbar to scroll tmux pane history and small-client live-window overflow on browsers where iframe wheel handling is unreliable.
 - On narrow mobile screens, the terminal area has horizontal scrolling so the tmux pane can keep a usable width without rotating the device.

@@ -25,7 +25,9 @@ documentation. Keep this file focused on working rules for future agents.
   registry file creation.
 - The right-side web scrollbar is owned by the parent app, not by ttyd. It
   calls server tmux-scroll APIs and should keep working even when iframe wheel
-  events are unreliable on mobile browsers.
+  events are unreliable on mobile browsers. It must account for both tmux pane
+  history and tmux client window offset when `window-size largest` makes the
+  tmux window larger than a small browser viewport.
 - Do not expose per-session `ttyd` TCP ports. `ttyd` must stay behind Unix
   sockets in the shared state directory.
 - Only wrapper-started sessions should appear in the UI unless the user changes

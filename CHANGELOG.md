@@ -4,6 +4,10 @@ Versions use calendar numbering: `YYYY.M.REVISION`.
 
 ## Unreleased
 
+## 2026.5.5 - 2026-05-16
+
+- Improve the right-side terminal scrollbar on small displays by including tmux client window overflow, not only tmux pane history.
+
 ## 2026.5.4 - 2026-05-16
 
 - Added in-memory per-IP login rate limiting.

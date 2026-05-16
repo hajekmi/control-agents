@@ -29,12 +29,17 @@ type Client struct {
 }
 
 type ScrollState struct {
-	Position    int  `json:"position"`
-	HistorySize int  `json:"historySize"`
-	PaneHeight  int  `json:"paneHeight"`
-	ScrollTop   int  `json:"scrollTop"`
-	ScrollMax   int  `json:"scrollMax"`
-	InCopyMode  bool `json:"inCopyMode"`
+	Position       int  `json:"position"`
+	HistorySize    int  `json:"historySize"`
+	PaneHeight     int  `json:"paneHeight"`
+	ScrollTop      int  `json:"scrollTop"`
+	ScrollMax      int  `json:"scrollMax"`
+	InCopyMode     bool `json:"inCopyMode"`
+	WindowHeight   int  `json:"windowHeight,omitempty"`
+	WindowOffsetY  int  `json:"windowOffsetY,omitempty"`
+	WindowOverflow int  `json:"windowOverflow,omitempty"`
+	clientName     string
+	clientHeight   int
 }
 
 type ScrollRequest struct {
@@ -92,57 +97,46 @@ func (c *Client) Status(ctx context.Context, target string) (ScrollState, error)
 	if err != nil {
 		return ScrollState{}, err
 	}
+	if view, err := c.scrollClient(ctx, target); err == nil {
+		state.applyClientView(view)
+	}
 	return state, nil
 }
 
 func (c *Client) Scroll(ctx context.Context, target string, request ScrollRequest) (ScrollState, error) {
-	amount := request.Amount
-	if amount <= 0 {
-		amount = 1
+	state, err := c.Status(ctx, target)
+	if err != nil {
+		return ScrollState{}, err
 	}
+	amount := normalizedAmount(request.Amount)
 
 	switch request.Action {
 	case "line-up":
-		if err := c.copyMode(ctx, target); err != nil {
-			return ScrollState{}, err
-		}
-		if err := c.sendCopyCommand(ctx, target, amount, "scroll-up"); err != nil {
+		if err := c.lineUp(ctx, target, state, amount); err != nil {
 			return ScrollState{}, err
 		}
 	case "line-down":
-		if err := c.copyMode(ctx, target); err != nil {
-			return ScrollState{}, err
-		}
-		if err := c.sendCopyCommand(ctx, target, amount, "scroll-down"); err != nil {
+		if err := c.lineDown(ctx, target, state, amount); err != nil {
 			return ScrollState{}, err
 		}
 	case "page-up":
-		if err := c.copyMode(ctx, target); err != nil {
-			return ScrollState{}, err
-		}
-		if err := c.sendCopyCommand(ctx, target, amount, "page-up"); err != nil {
+		if err := c.pageUp(ctx, target, state, amount); err != nil {
 			return ScrollState{}, err
 		}
 	case "page-down":
-		if err := c.copyMode(ctx, target); err != nil {
-			return ScrollState{}, err
-		}
-		if err := c.sendCopyCommand(ctx, target, amount, "page-down"); err != nil {
+		if err := c.pageDown(ctx, target, state, amount); err != nil {
 			return ScrollState{}, err
 		}
 	case "top":
-		if err := c.copyMode(ctx, target); err != nil {
-			return ScrollState{}, err
-		}
-		if err := c.sendCopyCommand(ctx, target, 1, "history-top"); err != nil {
+		if err := c.top(ctx, target, state); err != nil {
 			return ScrollState{}, err
 		}
 	case "bottom":
-		if err := c.bottom(ctx, target); err != nil {
+		if err := c.bottom(ctx, target, state); err != nil {
 			return ScrollState{}, err
 		}
 	case "set":
-		if err := c.setScrollTop(ctx, target, request.Value); err != nil {
+		if err := c.setScrollTop(ctx, target, state, request.Value); err != nil {
 			return ScrollState{}, err
 		}
 	default:
@@ -174,31 +168,50 @@ func (c *Client) copyMode(ctx context.Context, target string) error {
 	return c.runner.Run(ctx, "tmux", "copy-mode", "-t", target)
 }
 
-func (c *Client) bottom(ctx context.Context, target string) error {
+func (c *Client) bottom(ctx context.Context, target string, state ScrollState) error {
 	if err := c.copyMode(ctx, target); err != nil {
 		return err
 	}
 	if err := c.sendCopyCommand(ctx, target, 1, "history-bottom"); err != nil {
 		return err
 	}
-	return c.sendCopyCommand(ctx, target, 1, "cancel")
-}
-
-func (c *Client) setScrollTop(ctx context.Context, target string, value int) error {
-	state, err := c.Status(ctx, target)
-	if err != nil {
+	if err := c.sendCopyCommand(ctx, target, 1, "cancel"); err != nil {
 		return err
 	}
+	if state.hasClientOverflow() {
+		next, err := c.Status(ctx, target)
+		if err != nil {
+			return err
+		}
+		return c.setClientOffset(ctx, next, next.WindowOverflow)
+	}
+	return nil
+}
+
+func (c *Client) setScrollTop(ctx context.Context, target string, state ScrollState, value int) error {
 	if value < 0 {
 		value = 0
 	}
+	if value > state.ScrollMax {
+		value = state.ScrollMax
+	}
 	if value >= state.HistorySize {
-		return c.bottom(ctx, target)
+		if state.InCopyMode || state.Position > 0 {
+			if err := c.bottom(ctx, target, state); err != nil {
+				return err
+			}
+			next, err := c.Status(ctx, target)
+			if err != nil {
+				return err
+			}
+			state = next
+		}
+		return c.setClientOffset(ctx, state, value-state.HistorySize)
 	}
 
 	desiredPosition := state.HistorySize - value
-	if desiredPosition <= 0 {
-		return c.bottom(ctx, target)
+	if err := c.setClientOffset(ctx, state, 0); err != nil {
+		return err
 	}
 	if err := c.copyMode(ctx, target); err != nil {
 		return err
@@ -213,11 +226,102 @@ func (c *Client) setScrollTop(ctx context.Context, target string, value int) err
 	return nil
 }
 
+func (c *Client) lineUp(ctx context.Context, target string, state ScrollState, amount int) error {
+	if !state.InCopyMode && state.hasClientOverflow() && state.WindowOffsetY > 0 {
+		step := min(amount, state.WindowOffsetY)
+		if err := c.adjustClientOffset(ctx, state, "up", step); err != nil {
+			return err
+		}
+		amount -= step
+	}
+	if amount <= 0 {
+		return nil
+	}
+	if err := c.copyMode(ctx, target); err != nil {
+		return err
+	}
+	return c.sendCopyCommand(ctx, target, amount, "scroll-up")
+}
+
+func (c *Client) lineDown(ctx context.Context, target string, state ScrollState, amount int) error {
+	if state.InCopyMode || state.Position > 0 {
+		return c.sendCopyCommand(ctx, target, amount, "scroll-down")
+	}
+	return c.adjustClientOffset(ctx, state, "down", min(amount, state.WindowOverflow-state.WindowOffsetY))
+}
+
+func (c *Client) pageUp(ctx context.Context, target string, state ScrollState, amount int) error {
+	if !state.InCopyMode && state.hasClientOverflow() && state.WindowOffsetY > 0 {
+		step := min(amount*state.pageRows(), state.WindowOffsetY)
+		if err := c.adjustClientOffset(ctx, state, "up", step); err != nil {
+			return err
+		}
+		if step == amount*state.pageRows() {
+			return nil
+		}
+	}
+	if err := c.copyMode(ctx, target); err != nil {
+		return err
+	}
+	return c.sendCopyCommand(ctx, target, amount, "page-up")
+}
+
+func (c *Client) pageDown(ctx context.Context, target string, state ScrollState, amount int) error {
+	if state.InCopyMode || state.Position > 0 {
+		return c.sendCopyCommand(ctx, target, amount, "page-down")
+	}
+	return c.adjustClientOffset(ctx, state, "down", min(amount*state.pageRows(), state.WindowOverflow-state.WindowOffsetY))
+}
+
+func (c *Client) top(ctx context.Context, target string, state ScrollState) error {
+	if err := c.setClientOffset(ctx, state, 0); err != nil {
+		return err
+	}
+	if state.HistorySize <= 0 {
+		return nil
+	}
+	if err := c.copyMode(ctx, target); err != nil {
+		return err
+	}
+	return c.sendCopyCommand(ctx, target, 1, "history-top")
+}
+
 func (c *Client) sendCopyCommand(ctx context.Context, target string, amount int, command string) error {
 	if amount <= 1 {
 		return c.runner.Run(ctx, "tmux", "send-keys", "-t", target, "-X", command)
 	}
 	return c.runner.Run(ctx, "tmux", "send-keys", "-t", target, "-X", "-N", strconv.Itoa(amount), command)
+}
+
+func (c *Client) setClientOffset(ctx context.Context, state ScrollState, value int) error {
+	if !state.hasClientOverflow() {
+		return nil
+	}
+	if value < 0 {
+		value = 0
+	}
+	if value > state.WindowOverflow {
+		value = state.WindowOverflow
+	}
+	delta := value - state.WindowOffsetY
+	if delta > 0 {
+		return c.adjustClientOffset(ctx, state, "down", delta)
+	}
+	if delta < 0 {
+		return c.adjustClientOffset(ctx, state, "up", -delta)
+	}
+	return nil
+}
+
+func (c *Client) adjustClientOffset(ctx context.Context, state ScrollState, direction string, amount int) error {
+	if amount <= 0 || state.clientName == "" {
+		return nil
+	}
+	flag := "-D"
+	if direction == "up" {
+		flag = "-U"
+	}
+	return c.runner.Run(ctx, "tmux", "refresh-client", "-t", state.clientName, flag, strconv.Itoa(amount))
 }
 
 func parseScrollState(output string) (ScrollState, error) {
@@ -254,14 +358,134 @@ func parseScrollState(output string) (ScrollState, error) {
 		scrollTop = 0
 	}
 
-	return ScrollState{
+	state := ScrollState{
 		Position:    position,
 		HistorySize: historySize,
 		PaneHeight:  paneHeight,
 		ScrollTop:   scrollTop,
 		ScrollMax:   historySize,
 		InCopyMode:  inCopyMode,
+	}
+	return state, nil
+}
+
+type clientView struct {
+	name         string
+	height       int
+	windowHeight int
+	offsetY      int
+}
+
+func (c *Client) scrollClient(ctx context.Context, target string) (clientView, error) {
+	output, err := c.runner.Output(ctx, "tmux", "list-clients", "-t", target, "-F", "#{client_name}|#{client_height}|#{window_height}|#{window_offset_y}")
+	if err != nil {
+		return clientView{}, err
+	}
+	var best clientView
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		view, err := parseClientView(line)
+		if err != nil {
+			continue
+		}
+		if view.name == "" || view.height <= 0 || view.windowHeight <= 0 {
+			continue
+		}
+		if best.name == "" || view.height < best.height {
+			best = view
+		}
+	}
+	if best.name == "" {
+		return clientView{}, errors.New("no tmux clients")
+	}
+	return best, nil
+}
+
+func parseClientView(line string) (clientView, error) {
+	parts := strings.Split(strings.TrimSpace(line), "|")
+	if len(parts) != 4 {
+		return clientView{}, errors.New("unexpected tmux client format")
+	}
+	height, err := parseOptionalInt(parts[1])
+	if err != nil {
+		return clientView{}, fmt.Errorf("parse client height: %w", err)
+	}
+	windowHeight, err := parseOptionalInt(parts[2])
+	if err != nil {
+		return clientView{}, fmt.Errorf("parse window height: %w", err)
+	}
+	offsetY, err := parseOptionalInt(parts[3])
+	if err != nil {
+		return clientView{}, fmt.Errorf("parse window offset: %w", err)
+	}
+	if height < 0 {
+		height = 0
+	}
+	if windowHeight < 0 {
+		windowHeight = 0
+	}
+	if offsetY < 0 {
+		offsetY = 0
+	}
+	return clientView{
+		name:         parts[0],
+		height:       height,
+		windowHeight: windowHeight,
+		offsetY:      offsetY,
 	}, nil
+}
+
+func (state *ScrollState) applyClientView(view clientView) {
+	if view.name == "" || view.height <= 0 || view.windowHeight <= 0 {
+		return
+	}
+	overflow := view.windowHeight - view.height
+	if overflow < 0 {
+		overflow = 0
+	}
+	if view.offsetY > overflow {
+		view.offsetY = overflow
+	}
+	state.clientName = view.name
+	state.clientHeight = view.height
+	state.WindowHeight = view.windowHeight
+	state.WindowOffsetY = view.offsetY
+	state.WindowOverflow = overflow
+	state.ScrollMax = state.HistorySize + overflow
+	state.ScrollTop = state.HistorySize - state.Position + view.offsetY
+	if state.ScrollTop < 0 {
+		state.ScrollTop = 0
+	}
+	if state.ScrollTop > state.ScrollMax {
+		state.ScrollTop = state.ScrollMax
+	}
+	if overflow > 0 && view.height < state.PaneHeight {
+		state.PaneHeight = view.height
+	}
+}
+
+func (state ScrollState) hasClientOverflow() bool {
+	return state.clientName != "" && state.WindowOverflow > 0
+}
+
+func (state ScrollState) pageRows() int {
+	rows := state.clientHeight
+	if rows <= 0 {
+		rows = state.PaneHeight
+	}
+	if rows <= 1 {
+		return 1
+	}
+	return rows - 1
+}
+
+func normalizedAmount(amount int) int {
+	if amount <= 0 {
+		return 1
+	}
+	return amount
 }
 
 func parseOptionalInt(value string) (int, error) {

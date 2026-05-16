@@ -2,6 +2,7 @@ package tmux
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
 )
@@ -57,10 +58,82 @@ func TestScrollBottomCancelsCopyMode(t *testing.T) {
 	}
 
 	want := [][]string{
+		{"output", "tmux", "display-message", "-p", "-t", "main", "#{pane_in_mode}|#{scroll_position}|#{history_size}|#{pane_height}"},
 		{"run", "tmux", "copy-mode", "-t", "main"},
 		{"run", "tmux", "send-keys", "-t", "main", "-X", "history-bottom"},
 		{"run", "tmux", "send-keys", "-t", "main", "-X", "cancel"},
 		{"output", "tmux", "display-message", "-p", "-t", "main", "#{pane_in_mode}|#{scroll_position}|#{history_size}|#{pane_height}"},
+	}
+	if !reflect.DeepEqual(runner.calls, want) {
+		t.Fatalf("calls = %#v, want %#v", runner.calls, want)
+	}
+}
+
+func TestStatusIncludesClientWindowOverflow(t *testing.T) {
+	runner := &fakeRunner{
+		status:  "0||20|95\n",
+		clients: "/dev/pts/ssh|90|95|5\n/dev/pts/mobile|24|95|71\n",
+	}
+	client := NewClientWithRunner(runner)
+
+	state, err := client.Status(context.Background(), "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if state.PaneHeight != 24 {
+		t.Fatalf("pane height = %d, want visible client height 24", state.PaneHeight)
+	}
+	if state.WindowOverflow != 71 || state.WindowOffsetY != 71 {
+		t.Fatalf("window overflow/offset = %d/%d, want 71/71", state.WindowOverflow, state.WindowOffsetY)
+	}
+	if state.ScrollTop != 91 || state.ScrollMax != 91 {
+		t.Fatalf("scroll top/max = %d/%d, want 91/91", state.ScrollTop, state.ScrollMax)
+	}
+}
+
+func TestLineUpPansClientWindowBeforeHistory(t *testing.T) {
+	runner := &fakeRunner{
+		status:  "0||20|95\n",
+		clients: "/dev/pts/mobile|24|95|10\n",
+	}
+	client := NewClientWithRunner(runner)
+
+	_, err := client.Scroll(context.Background(), "main", ScrollRequest{Action: "line-up", Amount: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := [][]string{
+		{"output", "tmux", "display-message", "-p", "-t", "main", "#{pane_in_mode}|#{scroll_position}|#{history_size}|#{pane_height}"},
+		{"output", "tmux", "list-clients", "-t", "main", "-F", "#{client_name}|#{client_height}|#{window_height}|#{window_offset_y}"},
+		{"run", "tmux", "refresh-client", "-t", "/dev/pts/mobile", "-U", "3"},
+		{"output", "tmux", "display-message", "-p", "-t", "main", "#{pane_in_mode}|#{scroll_position}|#{history_size}|#{pane_height}"},
+		{"output", "tmux", "list-clients", "-t", "main", "-F", "#{client_name}|#{client_height}|#{window_height}|#{window_offset_y}"},
+	}
+	if !reflect.DeepEqual(runner.calls, want) {
+		t.Fatalf("calls = %#v, want %#v", runner.calls, want)
+	}
+}
+
+func TestScrollSetCanPanWithinLiveWindow(t *testing.T) {
+	runner := &fakeRunner{
+		status:  "0||20|95\n",
+		clients: "/dev/pts/mobile|24|95|71\n",
+	}
+	client := NewClientWithRunner(runner)
+
+	_, err := client.Scroll(context.Background(), "main", ScrollRequest{Action: "set", Value: 30})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := [][]string{
+		{"output", "tmux", "display-message", "-p", "-t", "main", "#{pane_in_mode}|#{scroll_position}|#{history_size}|#{pane_height}"},
+		{"output", "tmux", "list-clients", "-t", "main", "-F", "#{client_name}|#{client_height}|#{window_height}|#{window_offset_y}"},
+		{"run", "tmux", "refresh-client", "-t", "/dev/pts/mobile", "-U", "61"},
+		{"output", "tmux", "display-message", "-p", "-t", "main", "#{pane_in_mode}|#{scroll_position}|#{history_size}|#{pane_height}"},
+		{"output", "tmux", "list-clients", "-t", "main", "-F", "#{client_name}|#{client_height}|#{window_height}|#{window_offset_y}"},
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("calls = %#v, want %#v", runner.calls, want)
@@ -118,11 +191,19 @@ func TestSendKeyRejectsUnsupportedKey(t *testing.T) {
 }
 
 type fakeRunner struct {
-	status string
-	calls  [][]string
+	status  string
+	clients string
+	calls   [][]string
 }
 
 func (f *fakeRunner) Output(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if len(args) > 0 && args[0] == "list-clients" {
+		if f.clients == "" {
+			return nil, errors.New("no clients")
+		}
+		f.calls = append(f.calls, append([]string{"output", name}, args...))
+		return []byte(f.clients), nil
+	}
 	f.calls = append(f.calls, append([]string{"output", name}, args...))
 	return []byte(f.status), nil
 }
