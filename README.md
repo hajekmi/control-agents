@@ -37,6 +37,55 @@ On AlmaLinux/RHEL-like hosts, Chromium also needs system libraries. If `make tes
 sudo dnf install -y nspr nss atk at-spi2-atk at-spi2-core cups-libs libxcb libxkbcommon alsa-lib mesa-libgbm libX11 libXext cairo pango libXcomposite libXdamage libXfixes libXrandr
 ```
 
+## Installation
+
+Install the runtime and build prerequisites on the target host:
+
+- Go 1.25 or newer
+- `make`
+- `tmux`
+- `ttyd`
+- systemd user services
+
+Clone the repository, build, and install the server, wrapper client, user systemd unit, and first-run environment file:
+
+```sh
+git clone <repo-url> control-agents
+cd control-agents
+make install
+```
+
+`make install` creates `~/.config/terminal-mirror/env` with a generated `MIRROR_PASSWORD` if the file does not already exist. Review it before exposing the service:
+
+```sh
+chmod 600 ~/.config/terminal-mirror/env
+sed -n '1,80p' ~/.config/terminal-mirror/env
+```
+
+Enable and start the user service:
+
+```sh
+systemctl --user enable --now control-agents.service
+```
+
+If the service should start after boot before the user logs in, enable lingering for that user:
+
+```sh
+loginctl enable-linger "$USER"
+```
+
+Start a mirrored terminal session from any working directory:
+
+```sh
+control-agents main
+```
+
+Then open:
+
+```text
+https://<vm-host-or-ip>:8080
+```
+
 ## Build And Test
 
 ```sh
@@ -291,7 +340,7 @@ T-Control intentionally uses an action allowlist instead of accepting arbitrary 
 
 The main menu also includes `Resize`, which opens the resize-source panel. From there users can turn automatic resize management off, choose tmux's automatic smallest-client behavior, follow a selected web browser viewer, or follow the primary SSH/tmux client.
 
-## systemd User Service
+## systemd User Service Details
 
 Install the binary and user systemd unit:
 
@@ -363,7 +412,7 @@ In the container path only the Go server belongs in the container. `control-agen
 
 ## Security
 
-The service uses HTTPS by default with an automatically generated self-signed ECC certificate. The password, cookies, terminal output, and terminal input are encrypted on the wire, but the browser cannot verify a self-signed certificate until you trust it locally or configure `MIRROR_TLS_CERT_FILE` and `MIRROR_TLS_KEY_FILE` with a certificate from a trusted authority.
+The service uses HTTPS by default with an automatically generated self-signed ECC certificate and accepts TLS 1.3 only. Older protocol versions, including TLS 1.2, are disabled. The password, cookies, terminal output, and terminal input are encrypted on the wire, but the browser cannot verify a self-signed certificate until you trust it locally or configure `MIRROR_TLS_CERT_FILE` and `MIRROR_TLS_KEY_FILE` with a certificate from a trusted authority.
 
 Go-served pages and API responses include security headers: CSP for the app shell, `X-Frame-Options: SAMEORIGIN`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`, and a restrictive `Permissions-Policy`. CSP is not applied to `/terminal/` proxy responses so embedded `ttyd` assets keep working.
 

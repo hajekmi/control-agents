@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -45,6 +46,7 @@ func main() {
 		Addr:              cfg.ListenAddress(),
 		Handler:           app,
 		ReadHeaderTimeout: 5 * time.Second,
+		TLSConfig:         tls13OnlyConfig(),
 	}
 
 	errCh := make(chan error, 1)
@@ -70,5 +72,12 @@ func main() {
 			logger.Error("server failed", "error", err)
 			os.Exit(1)
 		}
+	}
+}
+
+func tls13OnlyConfig() *tls.Config {
+	return &tls.Config{
+		MinVersion: tls.VersionTLS13,
+		MaxVersion: tls.VersionTLS13,
 	}
 }

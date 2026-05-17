@@ -4,6 +4,12 @@ Versions use calendar numbering: `YYYY.M.REVISION`.
 
 ## Unreleased
 
+## 2026.5.11 - 2026-05-17
+
+- Restrict the HTTPS server to TLS 1.3 only and add a regression test for the TLS version policy.
+- Add a top-level installation guide for new systems, including `make install`, user systemd startup, lingering, and first mirrored session startup.
+- Remove Makefile cleanup of legacy install paths so install, uninstall, and clean targets only remove currently managed files.
+
 ## 2026.5.10 - 2026-05-16
 
 - Add a `Resize` management panel with Off, Automatic smallest, Follow web window, and Follow primary SSH/tmux modes.

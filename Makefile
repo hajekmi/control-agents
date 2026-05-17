@@ -14,10 +14,6 @@ SYSTEMD_USER_DIR ?= $(XDG_CONFIG_HOME)/systemd/user
 APP_CONFIG_DIR ?= $(XDG_CONFIG_HOME)/terminal-mirror
 ENV_FILE ?= $(APP_CONFIG_DIR)/env
 SERVICE_UNIT ?= control-agents.service
-LEGACY_SERVICE_UNIT ?= server.service
-LEGACY_SERVER_INSTALL ?= $(HOME)/.local/bin/control-agents
-LEGACY_SERVER_BINARY ?= $(dir $(SERVER_INSTALL))server
-LEGACY_CLIENT_INSTALL ?= /usr/local/bin/client_mirror
 SYSTEMCTL ?= systemctl
 INSTALL ?= install
 SUDO ?= sudo
@@ -66,19 +62,14 @@ install: build
 		printf '%s\n' "Created $(ENV_FILE) with a generated MIRROR_PASSWORD."; \
 	fi
 	$(INSTALL) -m 0755 $(SERVER_BINARY) $(SERVER_INSTALL)
-	rm -f "$(LEGACY_SERVER_INSTALL)" "$(LEGACY_SERVER_BINARY)"
 	@if [ -d "$(dir $(CLIENT_INSTALL))" ] && [ -w "$(dir $(CLIENT_INSTALL))" ]; then \
 		$(INSTALL) -m 0755 $(CLIENT_BINARY) "$(CLIENT_INSTALL)"; \
-		rm -f "$(LEGACY_CLIENT_INSTALL)"; \
 	else \
 		$(SUDO) $(INSTALL) -d "$(dir $(CLIENT_INSTALL))"; \
 		$(SUDO) $(INSTALL) -m 0755 $(CLIENT_BINARY) "$(CLIENT_INSTALL)"; \
-		$(SUDO) rm -f "$(LEGACY_CLIENT_INSTALL)"; \
 	fi
 	@printf '%s\n' "Installed $(CLIENT_INSTALL)."
 	$(INSTALL) -m 0644 systemd/user/$(SERVICE_UNIT) $(SYSTEMD_USER_DIR)/$(SERVICE_UNIT)
-	$(SYSTEMCTL) --user disable --now $(LEGACY_SERVICE_UNIT) >/dev/null 2>&1 || true
-	rm -f $(SYSTEMD_USER_DIR)/$(LEGACY_SERVICE_UNIT)
 	$(SYSTEMCTL) --user daemon-reload
 
 restart:
@@ -86,14 +77,13 @@ restart:
 
 uninstall:
 	$(SYSTEMCTL) --user disable --now $(SERVICE_UNIT) >/dev/null 2>&1 || true
-	$(SYSTEMCTL) --user disable --now $(LEGACY_SERVICE_UNIT) >/dev/null 2>&1 || true
-	rm -f $(SYSTEMD_USER_DIR)/$(SERVICE_UNIT) $(SERVER_INSTALL) $(LEGACY_SERVER_INSTALL) $(SYSTEMD_USER_DIR)/$(LEGACY_SERVICE_UNIT) $(LEGACY_SERVER_BINARY)
+	rm -f $(SYSTEMD_USER_DIR)/$(SERVICE_UNIT) $(SERVER_INSTALL)
 	@if [ -w "$(dir $(CLIENT_INSTALL))" ]; then \
-		rm -f "$(CLIENT_INSTALL)" "$(LEGACY_CLIENT_INSTALL)"; \
+		rm -f "$(CLIENT_INSTALL)"; \
 	else \
-		$(SUDO) rm -f "$(CLIENT_INSTALL)" "$(LEGACY_CLIENT_INSTALL)"; \
+		$(SUDO) rm -f "$(CLIENT_INSTALL)"; \
 	fi
 	$(SYSTEMCTL) --user daemon-reload
 
 clean:
-	rm -f $(SERVER_BINARY) bin/server
+	rm -f $(SERVER_BINARY)
