@@ -4,6 +4,12 @@ Versions use calendar numbering: `YYYY.M.REVISION`.
 
 ## Unreleased
 
+## 2026.5.12 - 2026-05-17
+
+- Add single-finger touch swipe history scrolling over the terminal iframe for iOS and other touch devices.
+- Hide the right-side history scrollbar on coarse-touch devices while preserving horizontal terminal panning.
+- Extend browser E2E coverage so terminal wheel, touch, and scrollbar controls all route through the tmux scroll API.
+
 ## 2026.5.11 - 2026-05-17
 
 - Restrict the HTTPS server to TLS 1.3 only and add a regression test for the TLS version policy.

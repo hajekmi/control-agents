@@ -280,6 +280,7 @@ button.secondary {
   position: absolute;
   right: var(--history-scrollbar-width);
   top: 0;
+  touch-action: pan-x;
   -webkit-overflow-scrolling: touch;
 }
 
@@ -288,6 +289,7 @@ button.secondary {
   display: block;
   height: 100%;
   min-width: var(--terminal-min-width);
+  touch-action: pan-x;
   width: 100%;
 }
 
@@ -363,6 +365,16 @@ button.secondary {
 
 .history-scrollbar.disabled {
   opacity: 0.55;
+}
+
+@media (hover: none) and (pointer: coarse) {
+  :root {
+    --history-scrollbar-width: 0px;
+  }
+
+  .history-scrollbar {
+    display: none;
+  }
 }
 
 .key-panel {

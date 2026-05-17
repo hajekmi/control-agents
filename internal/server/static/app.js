@@ -91,7 +91,7 @@
   let resizeDraftMode = "off";
   let resizeDraftViewerId = "";
   let resizeApplying = false;
-  const frameWheelBindings = new WeakMap();
+  const frameScrollBindings = new WeakMap();
   const resizeViewerId = getResizeViewerId();
 
   function getResizeViewerId() {
@@ -233,7 +233,7 @@
         frame.src = `/terminal/${encodeURIComponent(session.id)}/`;
         frame.hidden = true;
         frame.addEventListener("load", () => {
-          bindFrameWheelScroll(session.id, frame);
+          bindFrameScrollHandlers(session.id, frame);
           if (session.id === activeId) {
             scheduleResizeViewerHeartbeat(100);
           }
@@ -418,7 +418,106 @@
     postScroll(scrollingUp ? "line-up" : "line-down", { amount: wheelLineAmount(event) });
   }
 
-  function bindFrameWheelScroll(sessionId, frame) {
+  function singleTouchPoint(event) {
+    if (!event.touches || event.touches.length !== 1) return null;
+    return event.touches[0];
+  }
+
+  function createHistoryTouchScrollHandlers(options) {
+    const state = {
+      active: false,
+      axis: "",
+      startX: 0,
+      startY: 0,
+      lastY: 0,
+      remainder: 0
+    };
+
+    const reset = () => {
+      state.active = false;
+      state.axis = "";
+      state.remainder = 0;
+    };
+
+    const blockTerminalHandlers = (event) => {
+      if (!(options && options.blockTerminalHandlers)) return;
+      event.stopPropagation();
+      if (typeof event.stopImmediatePropagation === "function") {
+        event.stopImmediatePropagation();
+      }
+    };
+
+    const start = (event) => {
+      const touch = singleTouchPoint(event);
+      if (!activeId || !touch) {
+        reset();
+        return;
+      }
+      state.active = true;
+      state.axis = "";
+      state.startX = touch.clientX;
+      state.startY = touch.clientY;
+      state.lastY = touch.clientY;
+      state.remainder = 0;
+      if (!scrollState) {
+        refreshScrollState();
+      }
+    };
+
+    const move = (event) => {
+      if (!state.active) return;
+      const touch = singleTouchPoint(event);
+      if (!touch) {
+        reset();
+        return;
+      }
+
+      const totalX = touch.clientX - state.startX;
+      const totalY = touch.clientY - state.startY;
+      if (!state.axis) {
+        const absX = Math.abs(totalX);
+        const absY = Math.abs(totalY);
+        if (absX < 8 && absY < 8) return;
+        state.axis = absY > absX * 1.15 ? "vertical" : "horizontal";
+      }
+      if (state.axis !== "vertical") return;
+
+      if (event.cancelable !== false) {
+        event.preventDefault();
+      }
+      blockTerminalHandlers(event);
+      if (!scrollState) {
+        refreshScrollState();
+        state.lastY = touch.clientY;
+        return;
+      }
+      if (scrollState.scrollMax <= 0) return;
+
+      const deltaY = touch.clientY - state.lastY;
+      state.lastY = touch.clientY;
+      state.remainder += deltaY;
+      const lines = Math.min(80, Math.trunc(Math.abs(state.remainder) / 14));
+      if (lines < 1) return;
+
+      const scrollingUp = state.remainder > 0;
+      state.remainder = Math.sign(state.remainder) * (Math.abs(state.remainder) - lines * 14);
+      if ((scrollingUp && scrollState.scrollTop <= 0) || (!scrollingUp && scrollState.scrollTop >= scrollState.scrollMax)) {
+        return;
+      }
+      postScroll(scrollingUp ? "line-up" : "line-down", { amount: lines });
+    };
+
+    const end = (event) => {
+      if (state.axis === "vertical") {
+        blockTerminalHandlers(event);
+      }
+      reset();
+    };
+
+    return { start, move, end };
+  }
+
+  function bindFrameScrollHandlers(sessionId, frame) {
     let win;
     try {
       win = frame.contentWindow;
@@ -427,17 +526,26 @@
     }
     if (!win) return;
 
-    const previous = frameWheelBindings.get(frame);
+    const previous = frameScrollBindings.get(frame);
     if (previous) {
-      previous.win.removeEventListener("wheel", previous.listener, { capture: true });
+      previous.win.removeEventListener("wheel", previous.wheel, { capture: true });
+      previous.win.removeEventListener("touchstart", previous.touch.start, { capture: true });
+      previous.win.removeEventListener("touchmove", previous.touch.move, { capture: true });
+      previous.win.removeEventListener("touchend", previous.touch.end, { capture: true });
+      previous.win.removeEventListener("touchcancel", previous.touch.end, { capture: true });
     }
 
-    const listener = (event) => {
+    const wheel = (event) => {
       if (sessionId !== activeId) return;
       handleHistoryWheel(event, { blockTerminalHandlers: true });
     };
-    frameWheelBindings.set(frame, { win, listener });
-    win.addEventListener("wheel", listener, { capture: true, passive: false });
+    const touch = createHistoryTouchScrollHandlers({ blockTerminalHandlers: true });
+    frameScrollBindings.set(frame, { win, wheel, touch });
+    win.addEventListener("wheel", wheel, { capture: true, passive: false });
+    win.addEventListener("touchstart", touch.start, { capture: true, passive: true });
+    win.addEventListener("touchmove", touch.move, { capture: true, passive: false });
+    win.addEventListener("touchend", touch.end, { capture: true, passive: true });
+    win.addEventListener("touchcancel", touch.end, { capture: true, passive: true });
   }
 
   async function postKey(key) {
@@ -1113,6 +1221,11 @@
   historyScrollbar.addEventListener("wheel", (event) => {
     handleHistoryWheel(event);
   }, { passive: false });
+  const terminalTouchScroll = createHistoryTouchScrollHandlers();
+  terminalStrip.addEventListener("touchstart", terminalTouchScroll.start, { passive: true });
+  terminalStrip.addEventListener("touchmove", terminalTouchScroll.move, { passive: false });
+  terminalStrip.addEventListener("touchend", terminalTouchScroll.end, { passive: true });
+  terminalStrip.addEventListener("touchcancel", terminalTouchScroll.end, { passive: true });
 
   scrollTopButton.addEventListener("click", () => postScroll("top"));
   scrollBottomButton.addEventListener("click", () => postScroll("bottom"));

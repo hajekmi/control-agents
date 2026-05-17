@@ -189,7 +189,7 @@ test("authenticates, renders registered terminal, sends special keys, and logs o
   await expect(page).toHaveURL(/\/login$/);
 });
 
-test("terminal wheel and scrollbar controls route through tmux scroll API", async ({ page }) => {
+test("terminal wheel, touch, and scrollbar controls route through tmux scroll API", async ({ page }) => {
   await login(page);
   const terminalFrame = page.locator(`iframe[title="${sessionName}"]`);
   await expect(terminalFrame).toBeVisible();
@@ -228,6 +228,50 @@ test("terminal wheel and scrollbar controls route through tmux scroll API", asyn
 
   await expect.poll(async () => (await scrollState(page)).scrollTop).toBeLessThan(before.scrollTop);
   await expect.poll(async () => Number(await page.locator("#history-track").getAttribute("aria-valuenow"))).toBeLessThan(before.scrollTop);
+
+  await page.getByLabel("Live bottom").click();
+  await expect.poll(async () => {
+    const state = await scrollState(page);
+    return state.scrollTop === state.scrollMax;
+  }).toBe(true);
+
+  const beforeTouch = await scrollState(page);
+  const touchRequest = page.waitForRequest(isScrollRequest);
+  const touchResponse = page.waitForResponse((response) => isScrollRequest(response.request()));
+  await frame.evaluate(() => {
+    const dispatchTouch = (type, x, y) => {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      const touch = {
+        identifier: 1,
+        target: document.body,
+        clientX: x,
+        clientY: y,
+        pageX: x,
+        pageY: y,
+        screenX: x,
+        screenY: y
+      };
+      Object.defineProperty(event, "touches", {
+        configurable: true,
+        value: type === "touchend" || type === "touchcancel" ? [] : [touch]
+      });
+      Object.defineProperty(event, "changedTouches", {
+        configurable: true,
+        value: [touch]
+      });
+      window.dispatchEvent(event);
+    };
+    dispatchTouch("touchstart", 120, 220);
+    dispatchTouch("touchmove", 122, 260);
+    dispatchTouch("touchmove", 122, 315);
+    dispatchTouch("touchend", 122, 315);
+  });
+
+  const touchPost = await touchRequest;
+  expect(touchPost.postDataJSON()).toMatchObject({ action: "line-up" });
+  expect((await touchResponse).status()).toBe(200);
+
+  await expect.poll(async () => (await scrollState(page)).scrollTop).toBeLessThan(beforeTouch.scrollTop);
 });
 
 test("tracks local visual viewport changes without applying tmux resize", async ({ page }) => {

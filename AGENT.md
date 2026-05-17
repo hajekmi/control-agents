@@ -23,13 +23,14 @@ documentation. Keep this file focused on working rules for future agents.
   proxying.
 - `control-agents` owns tmux session creation/attach, `ttyd` startup, and
   registry file creation.
-- The right-side web scrollbar is owned by the parent app, not by ttyd. It
-  calls server tmux-scroll APIs and should keep working even when iframe wheel
-  events are unreliable on mobile browsers. It must account for both tmux pane
-  history and tmux client window offset when a non-default window-size mode
-  makes the tmux window larger than a browser viewport. When status is enabled,
-  subtract the tmux status line from client height before calculating bottom
-  offsets, otherwise the prompt can end up hidden behind the status line.
+- The right-side web scrollbar and touch swipe history scrolling are owned by
+  the parent app, not by ttyd. They call server tmux-scroll APIs and should keep
+  working even when iframe wheel events are unreliable on mobile browsers. The
+  scrollbar state must account for both tmux pane history and tmux client window
+  offset when a non-default window-size mode makes the tmux window larger than a
+  browser viewport. When status is enabled, subtract the tmux status line from
+  client height before calculating bottom offsets, otherwise the prompt can end
+  up hidden behind the status line.
 - The main menu `Resize` action opens the resize-source panel. Preserve the
   explicit modes: `off`, `smallest`, `web`, and `primary`. Browser tabs report
   distinct `sessionStorage` viewer IDs through `/resize/viewer` heartbeats, and
@@ -44,9 +45,10 @@ documentation. Keep this file focused on working rules for future agents.
   mode. Keep `visualViewport` tracking in the web shell so the active iframe
   shrinks above the keyboard and sends transient viewer heartbeats; do not apply
   tmux resize settings just because the keyboard opened.
-- The parent app also captures vertical wheel events over the same-origin ttyd
-  iframe and routes them through the same tmux-scroll API. Keep text selection
-  working by leaving tmux mouse mode off by default.
+- The parent app also captures vertical wheel and single-finger touch swipe
+  events over the same-origin ttyd iframe and routes them through the same
+  tmux-scroll API. Keep text selection working by leaving tmux mouse mode off by
+  default.
 - The T-Control panel exposes tmux window and pane actions through a server-side
   allowlist. Do not add arbitrary tmux command execution from browser input
   without an explicit security review.
