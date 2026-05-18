@@ -6,7 +6,7 @@ It is optimized for mobile touch displays, especially iOS Safari and iPadOS brow
 
 ## Quick Install
 
-Linux user-local install:
+Linux user-local install from the latest GitHub Release:
 
 ```sh
 sudo apt install tmux ttyd
@@ -22,7 +22,13 @@ Then open:
 https://<vm-host-or-ip>:8080
 ```
 
-The installer downloads the latest GitHub Release binaries, installs them under `~/.local/bin`, creates `~/.config/control-agents/env` with a generated `CONTROL_AGENTS_PASSWORD`, installs the user systemd unit, and runs `systemctl --user daemon-reload` when available.
+To install a specific release, pass `VERSION` to the shell that runs the installer:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/hajekmi/control-agents/main/install.sh | VERSION=2026.5.21 sh
+```
+
+The installer downloads GitHub Release binaries, installs them under `~/.local/bin`, creates `~/.config/control-agents/env` with a generated `CONTROL_AGENTS_PASSWORD` when the file does not already exist, installs the user systemd unit under `~/.config/systemd/user/control-agents.service`, and runs `systemctl --user daemon-reload` when available.
 
 Review the generated config before exposing the service:
 
@@ -35,6 +41,21 @@ If the service should start after boot before the user logs in, enable lingering
 
 ```sh
 loginctl enable-linger "$USER"
+```
+
+Uninstall the release-installed binaries and user systemd unit:
+
+```sh
+systemctl --user disable --now control-agents.service
+rm -f ~/.config/systemd/user/control-agents.service
+rm -f ~/.local/bin/control-agents ~/.local/bin/control-agents-server
+systemctl --user daemon-reload
+```
+
+The uninstall commands above keep `~/.config/control-agents/env` and `~/.local/state/control-agents`. Remove them only when you want to delete the generated password, auth secret, TLS certificate, session registry, sockets, and logs:
+
+```sh
+rm -rf ~/.config/control-agents ~/.local/state/control-agents
 ```
 
 ## Requirements
@@ -404,32 +425,6 @@ make uninstall
 ```
 
 `make uninstall` does not remove `~/.config/control-agents/env` or the state directory.
-
-## Podman Notes
-
-Systemd host deployment is the primary v1 path. Podman can work later for the Go app if the host state directory is bind-mounted into the container, because the app must access `ttyd` Unix sockets created by host-side wrapper sessions.
-
-Example build:
-
-```sh
-podman build -t control-agents-server .
-```
-
-Example run shape:
-
-```sh
-podman run --rm \
-  -p 8080:8080 \
-  -e CONTROL_AGENTS_PASSWORD=change-me \
-  -e CONTROL_AGENTS_BIND_ADDR=0.0.0.0 \
-  -e CONTROL_AGENTS_STATE_DIR=/state \
-  -v "$HOME/.local/state/control-agents:/state:Z" \
-  control-agents-server
-```
-
-On hosts where SELinux relabeling breaks Unix socket access, use the appropriate local policy or mount option for that host. The wrapper still runs on the host.
-
-In the container path only the Go server belongs in the container. `control-agents`, tmux, and `ttyd` still run on the host, and the shared state directory must be bind-mounted into the container.
 
 ## Security
 
