@@ -2,6 +2,10 @@
 
 Versions use calendar numbering: `YYYY.M.REVISION`.
 
+## 2026.5.18 - 2026-05-18
+
+- Keep managed tmux sessions from being destroyed while unattached and clean stale `ttyd` processes before replacing a session socket.
+
 ## 2026.5.17 - 2026-05-18
 
 - Change install/start instructions to restart the user service after install so existing running services pick up the new unit, binary, and state directory.

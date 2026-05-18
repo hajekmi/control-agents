@@ -36,6 +36,17 @@ SOCKET_PATH="$SOCKET_DIR/$SESSION_ID.sock"
 SESSION_FILE="$SESSION_DIR/$SESSION_ID.json"
 LOG_FILE="$LOG_DIR/$SESSION_ID.log"
 
+kill_ttyd_for_socket() {
+  local pid args
+  while read -r pid args; do
+    [[ -n "${pid:-}" ]] || continue
+    [[ "$pid" != "$$" ]] || continue
+    [[ "$args" == *"ttyd "* ]] || continue
+    [[ "$args" == *"$SOCKET_PATH"* ]] || continue
+    kill "$pid" 2>/dev/null || true
+  done < <(ps -eo pid=,args=)
+}
+
 if [[ "${#SOCKET_PATH}" -gt 100 ]]; then
   echo "socket path is too long for a Unix domain socket: $SOCKET_PATH" >&2
   echo "use a shorter CONTROL_AGENTS_STATE_DIR or session name" >&2
@@ -56,8 +67,9 @@ if ! command -v ttyd >/dev/null 2>&1; then
 fi
 
 if ! tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
-  tmux new-session -d -s "$SESSION_NAME" -c "$PWD"
+  tmux new-session -d -s "$SESSION_NAME" -c "$PWD" \; set-option -t "$SESSION_NAME" destroy-unattached off >/dev/null
 fi
+tmux set-option -t "$SESSION_NAME" destroy-unattached off >/dev/null
 tmux set-option -w -t "$SESSION_NAME:" window-size "$TMUX_WINDOW_SIZE" >/dev/null
 tmux set-option -t "$SESSION_NAME" mouse "$TMUX_MOUSE" >/dev/null
 tmux set-option -t "$SESSION_NAME" status-left-length 80 >/dev/null
@@ -73,6 +85,7 @@ if [[ -f "$SESSION_FILE" ]]; then
 fi
 
 if [[ "$needs_ttyd" -eq 1 ]]; then
+  kill_ttyd_for_socket
   rm -f "$SOCKET_PATH"
   nohup ttyd -W -i "$SOCKET_PATH" -b "/terminal/$SESSION_ID" -t "scrollback=$WEB_SCROLLBACK_LINES" tmux attach-session -t "$SESSION_NAME" >"$LOG_FILE" 2>&1 &
   ttyd_pid="$!"
