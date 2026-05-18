@@ -42,7 +42,6 @@ func TestReadRejectsPathTraversal(t *testing.T) {
 
 func TestListRemovesStaleSessions(t *testing.T) {
 	store := newTestStore(t)
-	store.liveness.processAlive = func(pid int) bool { return pid == 100 }
 	store.liveness.tmuxAlive = func(name string) bool { return name == "live" }
 	store.liveness.socketAlive = func(path string) bool { return path == "/tmp/live.sock" }
 

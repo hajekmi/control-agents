@@ -4,13 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -33,9 +33,8 @@ type Store struct {
 }
 
 type livenessChecks struct {
-	processAlive func(pid int) bool
-	tmuxAlive    func(name string) bool
-	socketAlive  func(path string) bool
+	tmuxAlive   func(name string) bool
+	socketAlive func(path string) bool
 }
 
 func NewStore(stateDir string) *Store {
@@ -43,9 +42,8 @@ func NewStore(stateDir string) *Store {
 		stateDir:    stateDir,
 		sessionsDir: filepath.Join(stateDir, "sessions"),
 		liveness: livenessChecks{
-			processAlive: processAlive,
-			tmuxAlive:    tmuxAlive,
-			socketAlive:  socketAlive,
+			tmuxAlive:   tmuxAlive,
+			socketAlive: socketAlive,
 		},
 	}
 }
@@ -128,9 +126,6 @@ func (s *Store) Remove(id string) error {
 }
 
 func (s *Store) Alive(session Session) bool {
-	if session.PID <= 0 || !s.liveness.processAlive(session.PID) {
-		return false
-	}
 	if !s.liveness.socketAlive(session.Socket) {
 		return false
 	}
@@ -167,15 +162,6 @@ func ValidID(id string) bool {
 	return id != "." && id != ".." && sessionIDPattern.MatchString(id)
 }
 
-func processAlive(pid int) bool {
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	err = process.Signal(syscall.Signal(0))
-	return err == nil
-}
-
 func tmuxAlive(name string) bool {
 	cmd := exec.Command("tmux", "has-session", "-t", name)
 	return cmd.Run() == nil
@@ -183,5 +169,13 @@ func tmuxAlive(name string) bool {
 
 func socketAlive(path string) bool {
 	info, err := os.Stat(path)
-	return err == nil && info.Mode()&os.ModeSocket != 0
+	if err != nil || info.Mode()&os.ModeSocket == 0 {
+		return false
+	}
+	conn, err := net.DialTimeout("unix", path, 200*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }
