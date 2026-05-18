@@ -4,6 +4,11 @@ Versions use calendar numbering: `YYYY.M.REVISION`.
 
 ## Unreleased
 
+## 2026.5.14 - 2026-05-18
+
+- Add the GNU AGPL-3.0 license and security policy for public repository use.
+- Document mobile touch display positioning and an installation simplification roadmap.
+
 ## 2026.5.13 - 2026-05-18
 
 - Add a menu `Copy mode` toggle that opens a selectable tmux pane text capture and disables touch/wheel history gesture routing while it is open.

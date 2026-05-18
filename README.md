@@ -2,6 +2,8 @@
 
 Terminal Mirror exposes wrapper-started tmux sessions through one password-protected web app. Each terminal session runs its own `ttyd` instance on a private Unix domain socket, while the Go service provides login, tab discovery, and reverse proxying.
 
+It is optimized for mobile touch displays, especially iOS Safari and iPadOS browsers: the web UI includes touch history scrolling, a selectable Copy mode, Paste support, special-key buttons, and viewport handling for the software keyboard.
+
 ## Requirements
 
 Runtime:
@@ -414,6 +416,8 @@ In the container path only the Go server belongs in the container. `control-agen
 
 ## Security
 
+See [`SECURITY.md`](SECURITY.md) for supported versions, vulnerability reporting, threat model notes, and deployment guidance.
+
 The service uses HTTPS by default with an automatically generated self-signed ECC certificate and accepts TLS 1.3 only. Older protocol versions, including TLS 1.2, are disabled. The password, cookies, terminal output, and terminal input are encrypted on the wire, but the browser cannot verify a self-signed certificate until you trust it locally or configure `MIRROR_TLS_CERT_FILE` and `MIRROR_TLS_KEY_FILE` with a certificate from a trusted authority.
 
 Go-served pages and API responses include security headers: CSP for the app shell, `X-Frame-Options: SAMEORIGIN`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`, and a restrictive `Permissions-Policy`. CSP is not applied to `/terminal/` proxy responses so embedded `ttyd` assets keep working.
@@ -423,6 +427,10 @@ For local-only access, bind to `127.0.0.1` and use SSH port forwarding:
 ```sh
 ssh -L 8080:127.0.0.1:8080 user@vm
 ```
+
+## License
+
+Terminal Mirror is licensed under the GNU Affero General Public License v3.0. See [`LICENSE`](LICENSE).
 
 ## Troubleshooting
 
