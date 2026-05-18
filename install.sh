@@ -221,7 +221,8 @@ printf 'Binaries: %s/control-agents-server, %s/control-agents\n' "$BIN_DIR" "$BI
 printf 'Config:   %s\n' "$ENV_FILE"
 printf 'Service:  %s\n\n' "$SERVICE_FILE"
 printf 'Next commands:\n'
-printf '  systemctl --user enable --now control-agents.service\n'
+printf '  systemctl --user enable control-agents.service\n'
+printf '  systemctl --user restart control-agents.service\n'
 printf '  control-agents main\n\n'
 printf 'Then open:\n'
 printf '  https://<host>:%s\n' "$port"

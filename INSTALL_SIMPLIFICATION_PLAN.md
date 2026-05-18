@@ -9,7 +9,8 @@ Make the first successful install require only:
 ```sh
 sudo apt install tmux ttyd
 curl -fsSL https://raw.githubusercontent.com/hajekmi/control-agents/main/install.sh | sh
-systemctl --user enable --now control-agents.service
+systemctl --user enable control-agents.service
+systemctl --user restart control-agents.service
 control-agents main
 ```
 
@@ -124,7 +125,8 @@ When the installer exists, move the quickstart near the top:
 ```sh
 sudo apt install tmux ttyd
 curl -fsSL https://raw.githubusercontent.com/hajekmi/control-agents/main/install.sh | sh
-systemctl --user enable --now control-agents.service
+systemctl --user enable control-agents.service
+systemctl --user restart control-agents.service
 control-agents main
 ```
 

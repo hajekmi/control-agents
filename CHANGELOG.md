@@ -4,6 +4,7 @@ Versions use calendar numbering: `YYYY.M.REVISION`.
 
 ## Unreleased
 
+- Change install/start instructions to restart the user service after install so existing running services pick up the new unit, binary, and state directory.
 - Fix `install.sh` checksum verification by preserving release asset filenames until after `sha256sum` validation.
 
 ## 2026.5.16 - 2026-05-18

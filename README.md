@@ -11,7 +11,8 @@ Linux user-local install:
 ```sh
 sudo apt install tmux ttyd
 curl -fsSL https://raw.githubusercontent.com/hajekmi/control-agents/main/install.sh | sh
-systemctl --user enable --now control-agents.service
+systemctl --user enable control-agents.service
+systemctl --user restart control-agents.service
 control-agents main
 ```
 
@@ -84,7 +85,8 @@ make install
 Enable and start:
 
 ```sh
-systemctl --user enable --now control-agents.service
+systemctl --user enable control-agents.service
+systemctl --user restart control-agents.service
 ```
 
 Start a mirrored terminal session from any working directory:
@@ -372,7 +374,8 @@ The same target installs the server as `~/.local/bin/control-agents-server` and 
 Enable and start:
 
 ```sh
-systemctl --user enable --now control-agents.service
+systemctl --user enable control-agents.service
+systemctl --user restart control-agents.service
 ```
 
 After later updates, rebuild, reinstall, and restart the service:
