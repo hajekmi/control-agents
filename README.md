@@ -89,10 +89,16 @@ systemctl --user enable control-agents.service
 systemctl --user restart control-agents.service
 ```
 
-Start a mirrored terminal session from any working directory:
+Register a mirrored terminal session from any working directory:
 
 ```sh
 control-agents main
+```
+
+This starts or reuses a tmux session, starts the private `ttyd` bridge, writes the session registry entry, prints the session ID, and exits. To attach the current terminal to the same tmux session too, use:
+
+```sh
+control-agents --attach main
 ```
 
 ## Build And Test
@@ -161,13 +167,13 @@ export CONTROL_AGENTS_PORT='8080'
 make run
 ```
 
-Start a mirrored SSH terminal:
+Register a mirrored terminal:
 
 ```sh
 bin/control-agents codex-main
 ```
 
-When no name is passed, `control-agents` uses the current directory name. For example, running it from `/home/bestie/codex/control-agents` registers the session as `control-agents`.
+When no name is passed, `control-agents` uses the current directory name. For example, running it from `/home/bestie/codex/control-agents` registers the session as `control-agents`. Add `--attach` before the name when you also want the current terminal to attach to the tmux session.
 
 Open:
 
@@ -202,7 +208,8 @@ The wrapper reads:
 - `CONTROL_AGENTS_TMUX_WINDOW_SIZE`, default `smallest`
 - `CONTROL_AGENTS_TMUX_MOUSE`, default `off`
 - `CONTROL_AGENTS_WEB_SCROLLBACK_LINES`, default `10000`
-- `CONTROL_AGENTS_NO_ATTACH=1`, test/support mode that registers the session without attaching the current terminal
+- `CONTROL_AGENTS_ATTACH=1`, attach the current terminal after registering the web session
+- `CONTROL_AGENTS_NO_ATTACH=1`, force register-and-exit mode; kept for tests and scripts
 
 The shared state directory contains:
 

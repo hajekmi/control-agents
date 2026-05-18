@@ -3,6 +3,23 @@ set -euo pipefail
 
 STATE_DIR="${CONTROL_AGENTS_STATE_DIR:-"$HOME/.local/state/control-agents"}"
 DEFAULT_SESSION_NAME="$(basename "$PWD")"
+ATTACH="${CONTROL_AGENTS_ATTACH:-0}"
+
+case "${1:-}" in
+  --attach)
+    ATTACH=1
+    shift
+    ;;
+  --no-attach)
+    ATTACH=0
+    shift
+    ;;
+esac
+
+if [[ "${CONTROL_AGENTS_NO_ATTACH:-}" == "1" ]]; then
+  ATTACH=0
+fi
+
 SESSION_NAME="${1:-"$DEFAULT_SESSION_NAME"}"
 DISPLAY_NAME="${CONTROL_AGENTS_DISPLAY_NAME:-$SESSION_NAME}"
 APP_NAME="${CONTROL_AGENTS_APP_NAME:-$DISPLAY_NAME}"
@@ -121,7 +138,7 @@ JSON
 mv "$tmp_file" "$SESSION_FILE"
 chmod 600 "$SESSION_FILE"
 
-if [[ "${CONTROL_AGENTS_NO_ATTACH:-}" == "1" ]]; then
+if [[ "$ATTACH" != "1" ]]; then
   printf '%s\n' "$SESSION_ID"
   exit 0
 fi

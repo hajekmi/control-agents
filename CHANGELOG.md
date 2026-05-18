@@ -2,6 +2,10 @@
 
 Versions use calendar numbering: `YYYY.M.REVISION`.
 
+## 2026.5.19 - 2026-05-18
+
+- Make `control-agents <name>` register web sessions and exit by default; use `control-agents --attach <name>` for local tmux attachment.
+
 ## 2026.5.18 - 2026-05-18
 
 - Keep managed tmux sessions from being destroyed while unattached and clean stale `ttyd` processes before replacing a session socket.
