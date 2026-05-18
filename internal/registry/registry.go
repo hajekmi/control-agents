@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"os/exec"
@@ -11,6 +12,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -30,11 +32,13 @@ type Store struct {
 	stateDir    string
 	sessionsDir string
 	liveness    livenessChecks
+	logger      *slog.Logger
 }
 
 type livenessChecks struct {
-	tmuxAlive   func(name string) bool
-	socketAlive func(path string) bool
+	processAlive func(pid int) error
+	tmuxAlive    func(name string) error
+	socketAlive  func(path string) error
 }
 
 func NewStore(stateDir string) *Store {
@@ -42,10 +46,15 @@ func NewStore(stateDir string) *Store {
 		stateDir:    stateDir,
 		sessionsDir: filepath.Join(stateDir, "sessions"),
 		liveness: livenessChecks{
-			tmuxAlive:   tmuxAlive,
-			socketAlive: socketAlive,
+			processAlive: processAlive,
+			tmuxAlive:    tmuxAlive,
+			socketAlive:  socketAlive,
 		},
 	}
+}
+
+func (s *Store) SetLogger(logger *slog.Logger) {
+	s.logger = logger
 }
 
 func (s *Store) Ensure() error {
@@ -75,10 +84,27 @@ func (s *Store) List() ([]Session, error) {
 		}
 		session, err := s.Read(strings.TrimSuffix(entry.Name(), ".json"))
 		if err != nil {
+			s.logWarn("ignore invalid session registry entry", "file", entry.Name(), "error", err)
 			continue
 		}
-		if !s.Alive(session) {
-			_ = s.Remove(session.ID)
+		if alive, reason, livenessErr := s.aliveReason(session); !alive {
+			args := []any{
+				"session", session.ID,
+				"reason", reason,
+				"pid", session.PID,
+				"tmux", session.TmuxName,
+				"socket", session.Socket,
+			}
+			if livenessErr != nil {
+				args = append(args, "error", livenessErr)
+			}
+			s.logWarn(
+				"remove stale session registry entry",
+				args...,
+			)
+			if err := s.Remove(session.ID); err != nil {
+				s.logWarn("failed to remove stale session registry entry", "session", session.ID, "error", err)
+			}
 			continue
 		}
 		sessions = append(sessions, session)
@@ -126,13 +152,32 @@ func (s *Store) Remove(id string) error {
 }
 
 func (s *Store) Alive(session Session) bool {
-	if !s.liveness.socketAlive(session.Socket) {
-		return false
+	alive, _, _ := s.aliveReason(session)
+	return alive
+}
+
+func (s *Store) aliveReason(session Session) (bool, string, error) {
+	if session.PID <= 0 {
+		return false, "invalid_pid", nil
 	}
-	if session.TmuxName != "" && !s.liveness.tmuxAlive(session.TmuxName) {
-		return false
+	if err := s.liveness.processAlive(session.PID); err != nil {
+		return false, "process_not_alive", err
 	}
-	return true
+	if err := s.liveness.socketAlive(session.Socket); err != nil {
+		return false, "socket_not_alive", err
+	}
+	if session.TmuxName != "" {
+		if err := s.liveness.tmuxAlive(session.TmuxName); err != nil {
+			return false, "tmux_session_not_alive", err
+		}
+	}
+	return true, "", nil
+}
+
+func (s *Store) logWarn(message string, args ...any) {
+	if s.logger != nil {
+		s.logger.Warn(message, args...)
+	}
 }
 
 func (s *Store) sessionPath(id string) string {
@@ -162,20 +207,39 @@ func ValidID(id string) bool {
 	return id != "." && id != ".." && sessionIDPattern.MatchString(id)
 }
 
-func tmuxAlive(name string) bool {
-	cmd := exec.Command("tmux", "has-session", "-t", name)
-	return cmd.Run() == nil
+func processAlive(pid int) error {
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	return process.Signal(syscall.Signal(0))
 }
 
-func socketAlive(path string) bool {
+func tmuxAlive(name string) error {
+	cmd := exec.Command("tmux", "has-session", "-t", name)
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	message := strings.TrimSpace(string(output))
+	if message == "" {
+		return err
+	}
+	return fmt.Errorf("%w: %s", err, message)
+}
+
+func socketAlive(path string) error {
 	info, err := os.Stat(path)
-	if err != nil || info.Mode()&os.ModeSocket == 0 {
-		return false
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSocket == 0 {
+		return fmt.Errorf("%s is not a unix socket", path)
 	}
 	conn, err := net.DialTimeout("unix", path, 200*time.Millisecond)
 	if err != nil {
-		return false
+		return err
 	}
 	_ = conn.Close()
-	return true
+	return nil
 }

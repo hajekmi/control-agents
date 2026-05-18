@@ -75,7 +75,11 @@ type resizeViewerResponse struct {
 var errInvalidResizeRequest = errors.New("invalid resize request")
 
 func New(cfg config.Config, logger *slog.Logger) (*Server, error) {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	store := registry.NewStore(cfg.StateDir)
+	store.SetLogger(logger.With("component", "registry"))
 	if err := store.Ensure(); err != nil {
 		return nil, err
 	}

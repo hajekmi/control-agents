@@ -2,6 +2,11 @@
 
 Versions use calendar numbering: `YYYY.M.REVISION`.
 
+## 2026.5.20 - 2026-05-18
+
+- Add user-service journal logging for stale session cleanup reasons.
+- Include Homebrew/Linuxbrew binary paths in the managed systemd service `PATH`.
+
 ## 2026.5.19 - 2026-05-18
 
 - Make `control-agents <name>` register web sessions and exit by default; use `control-agents --attach <name>` for local tmux attachment.

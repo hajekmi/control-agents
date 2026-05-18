@@ -451,6 +451,7 @@ Control Agents is licensed under the GNU Affero General Public License v3.0. See
 
 ## Troubleshooting
 
+- Service logs: use `journalctl --user -u control-agents.service -n 100 --no-pager` or follow live with `journalctl --user -u control-agents.service -f`.
 - No tabs appear: start sessions through `bin/control-agents <name>` and confirm service and wrapper use the same `CONTROL_AGENTS_STATE_DIR`.
 - No tabs appear but `<state-dir>/sockets/<session>.sock` exists: reinstall and restart the systemd unit so the service gets the managed `PATH` that includes `tmux` and `ttyd`.
 - Tab opens but terminal is unavailable: check `<state-dir>/logs/<session>.log` for `ttyd` errors.

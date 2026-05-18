@@ -117,9 +117,11 @@ Type=simple
 Environment=CONTROL_AGENTS_BIND_ADDR=0.0.0.0
 Environment=CONTROL_AGENTS_PORT=8080
 Environment=CONTROL_AGENTS_STATE_DIR=$HOME/.local/state/control-agents
-Environment=PATH=$BIN_DIR:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=$BIN_DIR:/home/linuxbrew/.linuxbrew/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
 EnvironmentFile=$ENV_FILE
 ExecStart=$BIN_DIR/control-agents-server
+StandardOutput=journal
+StandardError=journal
 Restart=on-failure
 RestartSec=3
 

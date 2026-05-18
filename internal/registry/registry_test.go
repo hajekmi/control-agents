@@ -2,6 +2,7 @@ package registry
 
 import (
 	"encoding/json"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -42,8 +43,24 @@ func TestReadRejectsPathTraversal(t *testing.T) {
 
 func TestListRemovesStaleSessions(t *testing.T) {
 	store := newTestStore(t)
-	store.liveness.tmuxAlive = func(name string) bool { return name == "live" }
-	store.liveness.socketAlive = func(path string) bool { return path == "/tmp/live.sock" }
+	store.liveness.processAlive = func(pid int) error {
+		if pid == 100 {
+			return nil
+		}
+		return errors.New("process is not alive")
+	}
+	store.liveness.tmuxAlive = func(name string) error {
+		if name == "live" {
+			return nil
+		}
+		return errors.New("tmux session is not alive")
+	}
+	store.liveness.socketAlive = func(path string) error {
+		if path == "/tmp/live.sock" {
+			return nil
+		}
+		return errors.New("socket is not alive")
+	}
 
 	writeSession(t, store, Session{
 		ID:        "live",
@@ -83,8 +100,8 @@ func TestSocketAlive(t *testing.T) {
 	}
 	defer listener.Close()
 
-	if !socketAlive(socketPath) {
-		t.Fatal("expected unix socket to be alive")
+	if err := socketAlive(socketPath); err != nil {
+		t.Fatalf("expected unix socket to be alive: %v", err)
 	}
 }
 
