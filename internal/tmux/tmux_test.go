@@ -396,6 +396,69 @@ func TestControlRejectsUnsupportedAction(t *testing.T) {
 	}
 }
 
+func TestCaptureUsesBoundedPaneCapture(t *testing.T) {
+	runner := &fakeRunner{
+		capture: "one\nselected word\n\n",
+	}
+	client := NewClientWithRunner(runner)
+
+	capture, err := client.Capture(context.Background(), "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if capture.Text != "one\nselected word" {
+		t.Fatalf("text = %q", capture.Text)
+	}
+	wantCalls := [][]string{
+		{"output", "tmux", "capture-pane", "-p", "-S", "-2000", "-E", "-1", "-t", "main"},
+	}
+	if !reflect.DeepEqual(runner.calls, wantCalls) {
+		t.Fatalf("calls = %#v, want %#v", runner.calls, wantCalls)
+	}
+}
+
+func TestPasteUsesNamedTmuxBuffer(t *testing.T) {
+	runner := &fakeRunner{}
+	client := NewClientWithRunner(runner)
+
+	err := client.Paste(context.Background(), "main", PasteRequest{Text: "hello\nworld"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.calls) != 2 {
+		t.Fatalf("calls = %#v, want 2 calls", runner.calls)
+	}
+	setCall := runner.calls[0]
+	pasteCall := runner.calls[1]
+	if len(setCall) != 7 || !reflect.DeepEqual(setCall[:4], []string{"run", "tmux", "set-buffer", "-b"}) || setCall[5] != "--" || setCall[6] != "hello\nworld" {
+		t.Fatalf("set-buffer call = %#v", setCall)
+	}
+	buffer := setCall[4]
+	if !strings.HasPrefix(buffer, "control-agents-paste-") {
+		t.Fatalf("buffer = %q", buffer)
+	}
+	wantPaste := []string{"run", "tmux", "paste-buffer", "-d", "-b", buffer, "-t", "main"}
+	if !reflect.DeepEqual(pasteCall, wantPaste) {
+		t.Fatalf("paste call = %#v, want %#v", pasteCall, wantPaste)
+	}
+}
+
+func TestPasteRejectsInvalidText(t *testing.T) {
+	for _, text := range []string{"bad\x00text", strings.Repeat("x", MaxPasteBytes+1)} {
+		runner := &fakeRunner{}
+		client := NewClientWithRunner(runner)
+
+		err := client.Paste(context.Background(), "main", PasteRequest{Text: text})
+		if !errors.Is(err, ErrInvalidPaste) {
+			t.Fatalf("err = %v, want ErrInvalidPaste", err)
+		}
+		if len(runner.calls) != 0 {
+			t.Fatalf("calls = %#v, want none", runner.calls)
+		}
+	}
+}
+
 func TestListResizeClientsClassifiesWebClients(t *testing.T) {
 	runner := &fakeRunner{
 		resizeClients: "/dev/pts/ios|301|80|24|100|on|80|23\n/dev/pts/chrome|402|140|48|200|on|140|47\n/dev/pts/ssh|501|200|60|300|off|200|60\n",
@@ -506,6 +569,7 @@ type fakeRunner struct {
 	clients       string
 	resizeClients string
 	windows       string
+	capture       string
 	calls         [][]string
 }
 
@@ -530,6 +594,10 @@ func (f *fakeRunner) Output(ctx context.Context, name string, args ...string) ([
 		}
 		f.calls = append(f.calls, append([]string{"output", name}, args...))
 		return []byte(f.windows), nil
+	}
+	if len(args) > 0 && args[0] == "capture-pane" {
+		f.calls = append(f.calls, append([]string{"output", name}, args...))
+		return []byte(f.capture), nil
 	}
 	f.calls = append(f.calls, append([]string{"output", name}, args...))
 	if len(f.statuses) > 0 {

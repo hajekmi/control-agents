@@ -1,5 +1,6 @@
 (function () {
   const tabs = document.getElementById("tabs");
+  const terminalPane = document.getElementById("terminal-pane");
   const terminalStrip = document.getElementById("terminal-strip");
   const emptyState = document.getElementById("empty-state");
   const heartbeat = document.getElementById("heartbeat");
@@ -14,10 +15,15 @@
   const keysToggle = document.getElementById("keys-toggle");
   const tControlToggle = document.getElementById("tcontrol-toggle");
   const resizeToggle = document.getElementById("resize-toggle");
+  const copyModeToggle = document.getElementById("copy-mode-toggle");
+  const pasteToggle = document.getElementById("paste-toggle");
   const versionBadge = document.getElementById("version-badge");
   const keyPanel = document.getElementById("key-panel");
   const keysClose = document.getElementById("keys-close");
   const keyGrid = document.getElementById("key-grid");
+  const copyPanel = document.getElementById("copy-panel");
+  const copyClose = document.getElementById("copy-close");
+  const copyText = document.getElementById("copy-text");
   const tControlPanel = document.getElementById("tcontrol-panel");
   const tControlClose = document.getElementById("tcontrol-close");
   const tControlWindows = document.getElementById("tcontrol-windows");
@@ -91,6 +97,9 @@
   let resizeDraftMode = "off";
   let resizeDraftViewerId = "";
   let resizeApplying = false;
+  let copyMode = false;
+  let copyRequestToken = 0;
+  let pasteStatusTimer = 0;
   const frameScrollBindings = new WeakMap();
   const resizeViewerId = getResizeViewerId();
 
@@ -173,6 +182,126 @@
     versionBadge.hidden = false;
   }
 
+  async function fetchCaptureText() {
+    if (!activeId) return "";
+    const response = await fetch(`/api/sessions/${encodeURIComponent(activeId)}/capture`, { credentials: "same-origin" });
+    if (response.status === 401) {
+      window.location.href = "/login";
+      return "";
+    }
+    if (!response.ok) {
+      throw new Error(`capture request failed: ${response.status}`);
+    }
+    const payload = await response.json();
+    return payload && typeof payload.text === "string" ? payload.text : "";
+  }
+
+  async function readClipboardText() {
+    if (navigator.clipboard && typeof navigator.clipboard.readText === "function") {
+      try {
+        return await navigator.clipboard.readText();
+      } catch (error) {
+        console.warn(error);
+      }
+    }
+    const pasted = window.prompt("Paste text");
+    return pasted === null ? "" : pasted;
+  }
+
+  async function postPaste(text) {
+    if (!activeId) return;
+    const response = await fetch(`/api/sessions/${encodeURIComponent(activeId)}/paste`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ text })
+    });
+    if (response.status === 401) {
+      window.location.href = "/login";
+      return;
+    }
+    if (!response.ok) {
+      throw new Error(`paste request failed: ${response.status}`);
+    }
+  }
+
+  function setPasteLabel(label, resetDelay) {
+    pasteToggle.textContent = label;
+    window.clearTimeout(pasteStatusTimer);
+    if (resetDelay) {
+      pasteStatusTimer = window.setTimeout(() => {
+        pasteToggle.textContent = "Paste";
+      }, resetDelay);
+    }
+  }
+
+  async function pasteFromClipboard() {
+    if (!activeId) return;
+    pasteToggle.disabled = true;
+    setPasteLabel("Pasting...");
+    try {
+      const text = await readClipboardText();
+      if (!text) {
+        setPasteLabel("Paste", 0);
+        return;
+      }
+      setCopyMode(false);
+      await postPaste(text);
+      setPasteLabel("Pasted", 900);
+      focusActiveTerminal();
+    } catch (error) {
+      setPasteLabel("Paste failed", 1400);
+      console.error(error);
+    } finally {
+      pasteToggle.disabled = !activeId;
+    }
+  }
+
+  async function refreshCopyText() {
+    if (!copyMode || !activeId) return;
+    const token = ++copyRequestToken;
+    copyText.textContent = "Loading terminal text...";
+    try {
+      const text = await fetchCaptureText();
+      if (token !== copyRequestToken || !copyMode) return;
+      copyText.textContent = text || "";
+      copyText.focus({ preventScroll: true });
+    } catch (error) {
+      if (token !== copyRequestToken || !copyMode) return;
+      copyText.textContent = "Failed to load terminal text.";
+      console.error(error);
+    }
+  }
+
+  function updateCopyModeControls() {
+    terminalPane.classList.toggle("copy-mode", copyMode);
+    copyPanel.hidden = !copyMode;
+    copyModeToggle.disabled = !activeId || frames.size === 0;
+    pasteToggle.disabled = !activeId || frames.size === 0;
+    copyModeToggle.classList.toggle("active", copyMode);
+    copyModeToggle.setAttribute("aria-pressed", String(copyMode));
+    copyModeToggle.title = copyMode
+      ? "Copy mode is on; selectable terminal text is open"
+      : "Copy mode is off; touch gestures scroll terminal history";
+  }
+
+  function setCopyMode(enabled) {
+    copyMode = Boolean(enabled) && Boolean(activeId);
+    if (copyMode) {
+      setKeyPanelOpen(false);
+      setTControlPanelOpen(false);
+      setResizePanelOpen(false);
+    }
+    if (!copyMode) {
+      copyRequestToken += 1;
+      copyText.textContent = "";
+    }
+    updateCopyModeControls();
+    if (copyMode) {
+      refreshCopyText();
+    }
+  }
+
   async function refreshVersion() {
     try {
       setVersionInfo(await fetchVersion());
@@ -196,6 +325,10 @@
     refreshScrollState();
     updateKeyButtons(false);
     updateControlButtons(false);
+    updateCopyModeControls();
+    if (copyMode && changed) {
+      refreshCopyText();
+    }
     if (!tControlPanel.hidden) {
       refreshTmuxControl();
     }
@@ -252,6 +385,7 @@
       emptyState.hidden = false;
       updateKeyButtons(false);
       updateControlButtons(false);
+      setCopyMode(false);
       if (!resizePanel.hidden) {
         refreshResizeSettings();
       }
@@ -398,6 +532,7 @@
   }
 
   function handleHistoryWheel(event, options) {
+    if (copyMode) return;
     if (!activeId || Math.abs(event.deltaY) <= Math.abs(event.deltaX) || event.ctrlKey) return;
     event.preventDefault();
     if (options && options.blockTerminalHandlers) {
@@ -448,6 +583,10 @@
     };
 
     const start = (event) => {
+      if (copyMode) {
+        reset();
+        return;
+      }
       const touch = singleTouchPoint(event);
       if (!activeId || !touch) {
         reset();
@@ -465,6 +604,10 @@
     };
 
     const move = (event) => {
+      if (copyMode) {
+        reset();
+        return;
+      }
       if (!state.active) return;
       const touch = singleTouchPoint(event);
       if (!touch) {
@@ -1242,6 +1385,15 @@
     setResizePanelOpen(true);
     setActionsMenuOpen(false);
   });
+  copyModeToggle.addEventListener("click", () => {
+    setCopyMode(!copyMode);
+    setActionsMenuOpen(false);
+  });
+  pasteToggle.addEventListener("click", () => {
+    setActionsMenuOpen(false);
+    pasteFromClipboard();
+  });
+  copyClose.addEventListener("click", () => setCopyMode(false));
   keysClose.addEventListener("click", () => setKeyPanelOpen(false));
   tControlClose.addEventListener("click", () => setTControlPanelOpen(false));
   resizeClose.addEventListener("click", () => setResizePanelOpen(false));
@@ -1271,6 +1423,7 @@
     setKeyPanelOpen(false);
     setTControlPanelOpen(false);
     setResizePanelOpen(false);
+    setCopyMode(false);
   });
 
   renderKeyButtons();

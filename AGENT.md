@@ -47,8 +47,11 @@ documentation. Keep this file focused on working rules for future agents.
   tmux resize settings just because the keyboard opened.
 - The parent app also captures vertical wheel and single-finger touch swipe
   events over the same-origin ttyd iframe and routes them through the same
-  tmux-scroll API. Keep text selection working by leaving tmux mouse mode off by
-  default.
+  tmux-scroll API. `Copy mode` in the menu disables this gesture routing and
+  opens a selectable text overlay from `/capture` rather than forcing browser
+  selection inside xterm's DOM. `Paste` reads the browser clipboard from an
+  explicit click and sends it through the bounded `/paste` endpoint. Keep text
+  selection working by leaving tmux mouse mode off by default.
 - The T-Control panel exposes tmux window and pane actions through a server-side
   allowlist. Do not add arbitrary tmux command execution from browser input
   without an explicit security review.

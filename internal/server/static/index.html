@@ -18,6 +18,8 @@
             <button type="button" id="keys-toggle" class="action-menu-item" aria-controls="key-panel" aria-expanded="false">Keys</button>
             <button type="button" id="tcontrol-toggle" class="action-menu-item" aria-controls="tcontrol-panel" aria-expanded="false">T-Control</button>
             <button type="button" id="resize-toggle" class="action-menu-item" aria-controls="resize-panel" aria-expanded="false">Resize</button>
+            <button type="button" id="copy-mode-toggle" class="action-menu-item" aria-pressed="false">Copy mode</button>
+            <button type="button" id="paste-toggle" class="action-menu-item">Paste</button>
             <form method="post" action="/logout">
               <button type="submit" class="action-menu-item">Sign out</button>
             </form>
@@ -36,6 +38,13 @@
           </div>
           <button type="button" id="scroll-bottom" class="scroll-button" title="Live bottom" aria-label="Live bottom">v</button>
         </div>
+        <aside id="copy-panel" class="copy-panel" role="dialog" aria-label="Copy terminal text" hidden>
+          <div class="copy-panel-header">
+            <h2>Copy mode</h2>
+            <button type="button" id="copy-close" class="key-panel-close" title="Close copy panel" aria-label="Close copy panel">x</button>
+          </div>
+          <pre id="copy-text" class="copy-text" tabindex="0"></pre>
+        </aside>
         <aside id="key-panel" class="key-panel" aria-label="Special keys" hidden>
           <div class="key-panel-header">
             <h2>Special keys</h2>

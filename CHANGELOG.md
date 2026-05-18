@@ -4,6 +4,11 @@ Versions use calendar numbering: `YYYY.M.REVISION`.
 
 ## Unreleased
 
+## 2026.5.13 - 2026-05-18
+
+- Add a menu `Copy mode` toggle that opens a selectable tmux pane text capture and disables touch/wheel history gesture routing while it is open.
+- Add a menu `Paste` action that reads clipboard text from an explicit click and pastes it into the active tmux pane through a bounded API.
+
 ## 2026.5.12 - 2026-05-17
 
 - Add single-finger touch swipe history scrolling over the terminal iframe for iOS and other touch devices.

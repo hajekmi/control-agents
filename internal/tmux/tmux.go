@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type CommandRunner interface {
@@ -54,6 +55,14 @@ type KeyRequest struct {
 	Key string `json:"key"`
 }
 
+type Capture struct {
+	Text string `json:"text"`
+}
+
+type PasteRequest struct {
+	Text string `json:"text"`
+}
+
 type Window struct {
 	Index  int    `json:"index"`
 	Name   string `json:"name"`
@@ -87,6 +96,9 @@ type ResizeClient struct {
 var ErrUnsupportedKey = errors.New("unsupported key")
 var ErrUnsupportedControlAction = errors.New("unsupported tmux control action")
 var ErrInvalidControlRequest = errors.New("invalid tmux control request")
+var ErrInvalidPaste = errors.New("invalid paste")
+
+const MaxPasteBytes = 64 * 1024
 
 var supportedKeys = map[string]string{
 	"ctrl-a":    "C-a",
@@ -154,6 +166,29 @@ func (c *Client) Scroll(ctx context.Context, target string, request ScrollReques
 
 func (c *Client) ScrollForProcess(ctx context.Context, target string, processPID int, request ScrollRequest) (ScrollState, error) {
 	return c.scroll(ctx, target, request, processPID)
+}
+
+func (c *Client) Capture(ctx context.Context, target string) (Capture, error) {
+	output, err := c.runner.Output(ctx, "tmux", "capture-pane", "-p", "-S", "-2000", "-E", "-1", "-t", target)
+	if err != nil {
+		return Capture{}, err
+	}
+	return Capture{Text: strings.TrimRight(string(output), "\n")}, nil
+}
+
+func (c *Client) Paste(ctx context.Context, target string, request PasteRequest) error {
+	text := request.Text
+	if len([]byte(text)) > MaxPasteBytes || strings.ContainsRune(text, '\x00') {
+		return ErrInvalidPaste
+	}
+	if text == "" {
+		return nil
+	}
+	buffer := fmt.Sprintf("control-agents-paste-%d", time.Now().UnixNano())
+	if err := c.runner.Run(ctx, "tmux", "set-buffer", "-b", buffer, "--", text); err != nil {
+		return err
+	}
+	return c.runner.Run(ctx, "tmux", "paste-buffer", "-d", "-b", buffer, "-t", target)
 }
 
 func (c *Client) scroll(ctx context.Context, target string, request ScrollRequest, processPID int) (ScrollState, error) {

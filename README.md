@@ -205,7 +205,7 @@ Keep `MIRROR_STATE_DIR` reasonably short. Unix domain socket paths have a small 
 
 `MIRROR_WEB_SCROLLBACK_LINES` controls browser-side terminal history retained by `ttyd`/xterm.js while the web tab is connected. It does not replay tmux output that happened before the browser connected.
 
-Because the browser is attached to tmux, `control-agents` keeps `MIRROR_TMUX_MOUSE=off` by default so normal terminal text selection works without tmux intercepting mouse drag. The parent web app captures vertical wheel events and single-finger touch swipes over the terminal iframe and sends them to the tmux scroll API, so history scrolls without sending arrow-key events to the shell prompt. Start or refresh a session with `MIRROR_TMUX_MOUSE=on` only if you prefer tmux to own all mouse handling.
+Because the browser is attached to tmux, `control-agents` keeps `MIRROR_TMUX_MOUSE=off` by default so normal terminal text selection works without tmux intercepting mouse drag. The parent web app captures vertical wheel events and single-finger touch swipes over the terminal iframe and sends them to the tmux scroll API, so history scrolls without sending arrow-key events to the shell prompt. On touch devices, use `Menu` -> `Copy mode` to open a selectable text capture of the active terminal instead of swipe history scrolling, then `Menu` -> `Paste` to paste clipboard text back into the active pane. Start or refresh a session with `MIRROR_TMUX_MOUSE=on` only if you prefer tmux to own all mouse handling.
 
 The default `MIRROR_TMUX_WINDOW_SIZE=smallest` keeps browser and SSH clients on the same full tmux screen, which is important for fullscreen terminal apps such as Midnight Commander. The web Resize panel can override the active session's live resize source without changing this startup default. If you override the wrapper default to `largest`, `latest`, or `manual`, the right-side web scrollbar also accounts for tmux client window offset when a smaller browser or SSH client is panned inside a taller tmux window. The server accounts for tmux's status line when calculating the visible pane height so returning the scrollbar to the bottom lands back on the live prompt, not behind the status line.
 
@@ -227,6 +227,8 @@ Authenticated routes:
 - `GET /api/sessions`: returns active wrapper-registered sessions.
 - `GET /api/sessions/{session}/scroll`: returns tmux history scrollbar state for the active pane.
 - `POST /api/sessions/{session}/scroll`: scrolls tmux history. Body actions are `line-up`, `line-down`, `page-up`, `page-down`, `top`, `bottom`, or `set`.
+- `GET /api/sessions/{session}/capture`: returns a bounded text capture of the active tmux pane for Copy mode.
+- `POST /api/sessions/{session}/paste`: pastes text into the active tmux pane. Body: `{ "text": "..." }`; NUL bytes and payloads above 64 KiB are rejected.
 - `POST /api/sessions/{session}/keys`: sends a special key to the active tmux pane. Body key values include `ctrl-c`, `ctrl-d`, `ctrl-z`, `ctrl-l`, `escape`, `tab`, `enter`, arrows, `home`, `end`, `page-up`, and `page-down`.
 - `POST /api/sessions/{session}/resize/viewer`: records a browser tab/window resize heartbeat. Body: `{ "viewerId": "browser-tab-id", "width": 120, "height": 32, "transient": false }`. A transient heartbeat updates viewer liveness but does not auto-apply web-follow resize.
 - `GET /api/sessions/{session}/resize`: returns resize state: selected mode, selected browser viewer, active browser viewers, primary tmux client metadata, and the last applied size when available.

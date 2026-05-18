@@ -210,6 +210,9 @@ test("terminal wheel, touch, and scrollbar controls route through tmux scroll AP
   const isScrollRequest = (request) => {
     return request.method() === "POST" && request.url().includes(`/api/sessions/${encodeURIComponent(sessionName)}/scroll`);
   };
+  const isPasteRequest = (request) => {
+    return request.method() === "POST" && request.url().includes(`/api/sessions/${encodeURIComponent(sessionName)}/paste`);
+  };
   const scrollRequest = page.waitForRequest(isScrollRequest);
   const scrollResponse = page.waitForResponse((response) => isScrollRequest(response.request()));
 
@@ -238,40 +241,61 @@ test("terminal wheel, touch, and scrollbar controls route through tmux scroll AP
   const beforeTouch = await scrollState(page);
   const touchRequest = page.waitForRequest(isScrollRequest);
   const touchResponse = page.waitForResponse((response) => isScrollRequest(response.request()));
-  await frame.evaluate(() => {
-    const dispatchTouch = (type, x, y) => {
-      const event = new Event(type, { bubbles: true, cancelable: true });
-      const touch = {
-        identifier: 1,
-        target: document.body,
-        clientX: x,
-        clientY: y,
-        pageX: x,
-        pageY: y,
-        screenX: x,
-        screenY: y
-      };
-      Object.defineProperty(event, "touches", {
-        configurable: true,
-        value: type === "touchend" || type === "touchcancel" ? [] : [touch]
-      });
-      Object.defineProperty(event, "changedTouches", {
-        configurable: true,
-        value: [touch]
-      });
-      window.dispatchEvent(event);
-    };
-    dispatchTouch("touchstart", 120, 220);
-    dispatchTouch("touchmove", 122, 260);
-    dispatchTouch("touchmove", 122, 315);
-    dispatchTouch("touchend", 122, 315);
-  });
+  await dispatchTerminalTouch(frame, [
+    ["touchstart", 120, 220],
+    ["touchmove", 122, 260],
+    ["touchmove", 122, 315],
+    ["touchend", 122, 315]
+  ]);
 
   const touchPost = await touchRequest;
   expect(touchPost.postDataJSON()).toMatchObject({ action: "line-up" });
   expect((await touchResponse).status()).toBe(200);
 
   await expect.poll(async () => (await scrollState(page)).scrollTop).toBeLessThan(beforeTouch.scrollTop);
+
+  await page.getByRole("button", { name: "Menu" }).click();
+  const captureResponse = page.waitForResponse((response) => {
+    return response.request().method() === "GET" && response.url().includes(`/api/sessions/${encodeURIComponent(sessionName)}/capture`);
+  });
+  await page.locator("#copy-mode-toggle").click();
+  expect((await captureResponse).status()).toBe(200);
+  await expect(page.locator("#copy-mode-toggle")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#terminal-pane")).toHaveClass(/copy-mode/);
+  await expect(page.locator("#copy-panel")).toBeVisible();
+  await expect(page.locator("#copy-text")).toContainText("playwright-line");
+
+  let copyModeScrollPosts = 0;
+  const countCopyModeScrollPost = (request) => {
+    if (isScrollRequest(request)) {
+      copyModeScrollPosts += 1;
+    }
+  };
+  page.on("request", countCopyModeScrollPost);
+  await dispatchTerminalTouch(frame, [
+    ["touchstart", 120, 220],
+    ["touchmove", 122, 270],
+    ["touchmove", 122, 330],
+    ["touchend", 122, 330]
+  ]);
+  await page.waitForTimeout(250);
+  page.off("request", countCopyModeScrollPost);
+  expect(copyModeScrollPosts).toBe(0);
+
+  await page.getByRole("button", { name: "Menu" }).click();
+  await page.locator("#copy-mode-toggle").click();
+  await expect(page.locator("#copy-mode-toggle")).toHaveAttribute("aria-pressed", "false");
+  await expect(page.locator("#terminal-pane")).not.toHaveClass(/copy-mode/);
+  await expect(page.locator("#copy-panel")).toBeHidden();
+
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: baseURL });
+  await page.evaluate(() => navigator.clipboard.writeText("playwright-paste-text"));
+  const pasteRequest = page.waitForRequest(isPasteRequest);
+  const pasteResponse = page.waitForResponse((response) => isPasteRequest(response.request()));
+  await page.getByRole("button", { name: "Menu" }).click();
+  await page.locator("#paste-toggle").click();
+  expect((await pasteRequest).postDataJSON()).toEqual({ text: "playwright-paste-text" });
+  expect((await pasteResponse).status()).toBe(200);
 });
 
 test("tracks local visual viewport changes without applying tmux resize", async ({ page }) => {
@@ -324,6 +348,36 @@ async function scrollState(page) {
     }
     return response.json();
   }, sessionName);
+}
+
+async function dispatchTerminalTouch(frame, events) {
+  await frame.evaluate((touchEvents) => {
+    const dispatchTouch = ([type, x, y]) => {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      const touch = {
+        identifier: 1,
+        target: document.body,
+        clientX: x,
+        clientY: y,
+        pageX: x,
+        pageY: y,
+        screenX: x,
+        screenY: y
+      };
+      Object.defineProperty(event, "touches", {
+        configurable: true,
+        value: type === "touchend" || type === "touchcancel" ? [] : [touch]
+      });
+      Object.defineProperty(event, "changedTouches", {
+        configurable: true,
+        value: [touch]
+      });
+      window.dispatchEvent(event);
+    };
+    for (const touchEvent of touchEvents) {
+      dispatchTouch(touchEvent);
+    }
+  }, events);
 }
 
 async function resizeState(page) {

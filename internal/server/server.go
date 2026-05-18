@@ -239,6 +239,10 @@ func (s *Server) handleSessionAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleScrollAPI(w, r, id, session)
 	case "keys":
 		s.handleKeysAPI(w, r, id, session)
+	case "capture":
+		s.handleCaptureAPI(w, r, id, session)
+	case "paste":
+		s.handlePasteAPI(w, r, id, session)
 	case "resize":
 		s.handleResizeAPI(w, r, id, session)
 	case "resize/viewer":
@@ -276,6 +280,43 @@ func (s *Server) handleScrollAPI(w http.ResponseWriter, r *http.Request, id stri
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func (s *Server) handleCaptureAPI(w http.ResponseWriter, r *http.Request, id string, session registry.Session) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	capture, err := s.tmux.Capture(r.Context(), session.TmuxName)
+	if err != nil {
+		s.logger.Error("tmux capture failed", "session", id, "error", err)
+		http.Error(w, "failed to capture terminal text", http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, capture)
+}
+
+func (s *Server) handlePasteAPI(w http.ResponseWriter, r *http.Request, id string, session registry.Session) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var request tmux.PasteRequest
+	r.Body = http.MaxBytesReader(w, r.Body, int64(tmux.MaxPasteBytes*8+1024))
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		http.Error(w, "invalid paste request", http.StatusBadRequest)
+		return
+	}
+	if err := s.tmux.Paste(r.Context(), session.TmuxName, request); err != nil {
+		if errors.Is(err, tmux.ErrInvalidPaste) {
+			http.Error(w, "invalid paste", http.StatusBadRequest)
+			return
+		}
+		s.logger.Error("tmux paste failed", "session", id, "error", err)
+		http.Error(w, "failed to paste terminal text", http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
 }
 
 func (s *Server) handleKeysAPI(w http.ResponseWriter, r *http.Request, id string, session registry.Session) {
