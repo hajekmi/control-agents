@@ -2,6 +2,11 @@
 
 Versions use calendar numbering: `YYYY.M.REVISION`.
 
+## 2026.5.16 - 2026-05-18
+
+- Publish the install simplification release from the fixed GitHub Actions workflow.
+- Use Node 24-native GitHub Actions and disable empty Go cache restore warnings.
+
 ## 2026.5.15 - 2026-05-18
 
 - BREAKING: Rename the public runtime namespace from Control Agents' earlier mirror naming to `control-agents`, including config/state paths and `CONTROL_AGENTS_*` environment variables.
