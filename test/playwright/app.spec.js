@@ -28,10 +28,10 @@ test.beforeAll(async () => {
     detached: true,
     env: {
       ...process.env,
-      MIRROR_PASSWORD: "secret",
-      MIRROR_BIND_ADDR: "127.0.0.1",
-      MIRROR_PORT: String(port),
-      MIRROR_STATE_DIR: stateDir
+      CONTROL_AGENTS_PASSWORD: "secret",
+      CONTROL_AGENTS_BIND_ADDR: "127.0.0.1",
+      CONTROL_AGENTS_PORT: String(port),
+      CONTROL_AGENTS_STATE_DIR: stateDir
     },
     stdio: ["ignore", "pipe", "pipe"]
   });
@@ -48,9 +48,9 @@ test.beforeAll(async () => {
     cwd: repoRoot,
     env: {
       ...process.env,
-      MIRROR_STATE_DIR: stateDir,
-      MIRROR_NO_ATTACH: "1",
-      MIRROR_WEB_SCROLLBACK_LINES: "2345"
+      CONTROL_AGENTS_STATE_DIR: stateDir,
+      CONTROL_AGENTS_NO_ATTACH: "1",
+      CONTROL_AGENTS_WEB_SCROLLBACK_LINES: "2345"
     },
     encoding: "utf8"
   });

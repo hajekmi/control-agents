@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-const CookieName = "terminal_mirror_session"
+const CookieName = "control_agents_session"
 const SecretSize = 32
 
 type Authenticator struct {

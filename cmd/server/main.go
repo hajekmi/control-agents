@@ -12,10 +12,10 @@ import (
 	"syscall"
 	"time"
 
-	"terminal-mirror/internal/cert"
-	"terminal-mirror/internal/config"
-	"terminal-mirror/internal/server"
-	"terminal-mirror/internal/version"
+	"control-agents/internal/cert"
+	"control-agents/internal/config"
+	"control-agents/internal/server"
+	"control-agents/internal/version"
 )
 
 func main() {
@@ -52,7 +52,7 @@ func main() {
 	errCh := make(chan error, 1)
 	go func() {
 		build := version.Current()
-		logger.Info("terminal mirror listening", "scheme", "https", "addr", cfg.ListenAddress(), "state_dir", cfg.StateDir, "tls_cert", cfg.TLSCertFile, "version", build.Version, "commit", build.Commit, "build_date", build.BuildDate)
+		logger.Info("control agents listening", "scheme", "https", "addr", cfg.ListenAddress(), "state_dir", cfg.StateDir, "tls_cert", cfg.TLSCertFile, "version", build.Version, "commit", build.Commit, "build_date", build.BuildDate)
 		errCh <- httpServer.ListenAndServeTLS(cfg.TLSCertFile, cfg.TLSKeyFile)
 	}()
 

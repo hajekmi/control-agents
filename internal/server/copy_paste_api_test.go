@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"terminal-mirror/internal/registry"
-	"terminal-mirror/internal/tmux"
+	"control-agents/internal/registry"
+	"control-agents/internal/tmux"
 )
 
 func TestCaptureAPIReturnsPaneText(t *testing.T) {

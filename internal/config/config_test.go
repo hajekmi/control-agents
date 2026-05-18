@@ -7,8 +7,8 @@ import (
 )
 
 func TestLoadFromEnvRequiresPassword(t *testing.T) {
-	t.Setenv("MIRROR_PASSWORD", "")
-	t.Setenv("MIRROR_PASSWORD_FILE", "")
+	t.Setenv("CONTROL_AGENTS_PASSWORD", "")
+	t.Setenv("CONTROL_AGENTS_PASSWORD_FILE", "")
 
 	_, err := LoadFromEnv()
 	if err == nil {
@@ -23,12 +23,12 @@ func TestLoadFromEnvReadsPasswordFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	t.Setenv("MIRROR_PASSWORD", "")
-	t.Setenv("MIRROR_PASSWORD_FILE", passwordFile)
-	t.Setenv("MIRROR_BIND_ADDR", "127.0.0.1")
-	t.Setenv("MIRROR_PORT", "9090")
-	t.Setenv("MIRROR_STATE_DIR", filepath.Join(dir, "state"))
-	t.Setenv("MIRROR_COOKIE_SECURE", "true")
+	t.Setenv("CONTROL_AGENTS_PASSWORD", "")
+	t.Setenv("CONTROL_AGENTS_PASSWORD_FILE", passwordFile)
+	t.Setenv("CONTROL_AGENTS_BIND_ADDR", "127.0.0.1")
+	t.Setenv("CONTROL_AGENTS_PORT", "9090")
+	t.Setenv("CONTROL_AGENTS_STATE_DIR", filepath.Join(dir, "state"))
+	t.Setenv("CONTROL_AGENTS_COOKIE_SECURE", "true")
 
 	cfg, err := LoadFromEnv()
 	if err != nil {
@@ -59,10 +59,10 @@ func TestLoadFromEnvReadsPasswordFile(t *testing.T) {
 
 func TestLoadFromEnvReadsTLSPathOverrides(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("MIRROR_PASSWORD", "secret")
-	t.Setenv("MIRROR_STATE_DIR", filepath.Join(dir, "state"))
-	t.Setenv("MIRROR_TLS_CERT_FILE", filepath.Join(dir, "custom.crt"))
-	t.Setenv("MIRROR_TLS_KEY_FILE", filepath.Join(dir, "custom.key"))
+	t.Setenv("CONTROL_AGENTS_PASSWORD", "secret")
+	t.Setenv("CONTROL_AGENTS_STATE_DIR", filepath.Join(dir, "state"))
+	t.Setenv("CONTROL_AGENTS_TLS_CERT_FILE", filepath.Join(dir, "custom.crt"))
+	t.Setenv("CONTROL_AGENTS_TLS_KEY_FILE", filepath.Join(dir, "custom.key"))
 
 	cfg, err := LoadFromEnv()
 	if err != nil {
@@ -78,9 +78,9 @@ func TestLoadFromEnvReadsTLSPathOverrides(t *testing.T) {
 
 func TestLoadFromEnvReadsAuthSecretPathOverride(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("MIRROR_PASSWORD", "secret")
-	t.Setenv("MIRROR_STATE_DIR", filepath.Join(dir, "state"))
-	t.Setenv("MIRROR_AUTH_SECRET_FILE", filepath.Join(dir, "custom-session.key"))
+	t.Setenv("CONTROL_AGENTS_PASSWORD", "secret")
+	t.Setenv("CONTROL_AGENTS_STATE_DIR", filepath.Join(dir, "state"))
+	t.Setenv("CONTROL_AGENTS_AUTH_SECRET_FILE", filepath.Join(dir, "custom-session.key"))
 
 	cfg, err := LoadFromEnv()
 	if err != nil {

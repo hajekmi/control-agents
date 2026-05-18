@@ -41,10 +41,10 @@ func TestRealTmuxAndTtydSessionAppears(t *testing.T) {
 	port := freePort(t)
 	app := exec.CommandContext(ctx, "go", "run", "../../cmd/server")
 	app.Env = append(os.Environ(),
-		"MIRROR_PASSWORD=secret",
-		"MIRROR_BIND_ADDR=127.0.0.1",
-		fmt.Sprintf("MIRROR_PORT=%d", port),
-		"MIRROR_STATE_DIR="+stateDir,
+		"CONTROL_AGENTS_PASSWORD=secret",
+		"CONTROL_AGENTS_BIND_ADDR=127.0.0.1",
+		fmt.Sprintf("CONTROL_AGENTS_PORT=%d", port),
+		"CONTROL_AGENTS_STATE_DIR="+stateDir,
 	)
 	var appLog bytes.Buffer
 	app.Stdout = &appLog
@@ -58,9 +58,9 @@ func TestRealTmuxAndTtydSessionAppears(t *testing.T) {
 
 	wrapper := exec.CommandContext(ctx, "../../bin/control-agents", sessionName)
 	wrapper.Env = append(os.Environ(),
-		"MIRROR_STATE_DIR="+stateDir,
-		"MIRROR_NO_ATTACH=1",
-		"MIRROR_WEB_SCROLLBACK_LINES=2345",
+		"CONTROL_AGENTS_STATE_DIR="+stateDir,
+		"CONTROL_AGENTS_NO_ATTACH=1",
+		"CONTROL_AGENTS_WEB_SCROLLBACK_LINES=2345",
 	)
 	if output, err := wrapper.CombinedOutput(); err != nil {
 		t.Fatalf("wrapper failed: %v\n%s", err, output)
@@ -111,8 +111,8 @@ func TestClientDefaultsSessionNameToCurrentDirectory(t *testing.T) {
 	wrapper := exec.CommandContext(ctx, filepath.Join(root, "bin", "control-agents"))
 	wrapper.Dir = workDir
 	wrapper.Env = append(os.Environ(),
-		"MIRROR_STATE_DIR="+stateDir,
-		"MIRROR_NO_ATTACH=1",
+		"CONTROL_AGENTS_STATE_DIR="+stateDir,
+		"CONTROL_AGENTS_NO_ATTACH=1",
 	)
 	output, err := wrapper.CombinedOutput()
 	if err != nil {
@@ -288,7 +288,7 @@ func login(t *testing.T, client *http.Client, port int) *http.Cookie {
 	}
 	defer resp.Body.Close()
 	for _, cookie := range resp.Cookies() {
-		if cookie.Name == "terminal_mirror_session" {
+		if cookie.Name == "control_agents_session" {
 			return cookie
 		}
 	}

@@ -1,4 +1,4 @@
-# Terminal Mirror Agent Notes
+# Control Agents Agent Notes
 
 Use `README.md` for product, API, install, deploy, and operations
 documentation. Keep this file focused on working rules for future agents.
@@ -66,11 +66,11 @@ documentation. Keep this file focused on working rules for future agents.
   browser and SSH clients attached to the same tmux session.
 - Preserve the default tmux `mouse off` behavior unless changing it is the
   purpose of the task. It keeps normal terminal text selection from being
-  intercepted by tmux; users can set `MIRROR_TMUX_MOUSE=on` only when they
+  intercepted by tmux; users can set `CONTROL_AGENTS_TMUX_MOUSE=on` only when they
   prefer tmux to own all mouse handling.
 - Preserve the managed tmux status line shape: `status-left` session label,
   `status-right` current pane path, no hostname/date/time.
-- Preserve `MIRROR_WEB_SCROLLBACK_LINES` as the browser scrollback control.
+- Preserve `CONTROL_AGENTS_WEB_SCROLLBACK_LINES` as the browser scrollback control.
   This is xterm.js history while the web tab is connected, not replay of past
   tmux history.
 
@@ -81,7 +81,7 @@ documentation. Keep this file focused on working rules for future agents.
   directory.
 - Keep state directory permissions private: directories `0700`, registry files
   `0600`, auth secret `0600`.
-- HTTPS is the default server mode. Keep `MIRROR_COOKIE_SECURE=true` as the
+- HTTPS is the default server mode. Keep `CONTROL_AGENTS_COOKIE_SECURE=true` as the
   default unless the user explicitly needs an HTTP-only test/development path.
 - Preserve the in-memory login rate limiter unless the user explicitly changes
   the security model. It is intentionally per direct client IP and reset on

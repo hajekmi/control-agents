@@ -4,11 +4,11 @@ After=network.target
 
 [Service]
 Type=simple
-Environment=MIRROR_BIND_ADDR=0.0.0.0
-Environment=MIRROR_PORT=8080
-Environment=MIRROR_STATE_DIR=%h/.local/state/terminal-mirror
-Environment=PATH=%h/.local/bin:/home/linuxbrew/.linuxbrew/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
-EnvironmentFile=%h/.config/terminal-mirror/env
+Environment=CONTROL_AGENTS_BIND_ADDR=0.0.0.0
+Environment=CONTROL_AGENTS_PORT=8080
+Environment=CONTROL_AGENTS_STATE_DIR=%h/.local/state/control-agents
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=%h/.config/control-agents/env
 ExecStart=%h/.local/bin/control-agents-server
 Restart=on-failure
 RestartSec=3

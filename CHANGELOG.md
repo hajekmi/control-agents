@@ -2,7 +2,11 @@
 
 Versions use calendar numbering: `YYYY.M.REVISION`.
 
-## Unreleased
+## 2026.5.15 - 2026-05-18
+
+- BREAKING: Rename the public runtime namespace from Control Agents' earlier mirror naming to `control-agents`, including config/state paths and `CONTROL_AGENTS_*` environment variables.
+- Add a user-local `install.sh` that installs GitHub Release binaries, writes `~/.config/control-agents/env`, and installs the user systemd service.
+- Add a GitHub Actions release workflow that publishes Linux `amd64` and `arm64` binaries plus checksums for the installer.
 
 ## 2026.5.14 - 2026-05-18
 

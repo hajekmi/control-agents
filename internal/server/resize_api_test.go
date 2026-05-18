@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"terminal-mirror/internal/registry"
-	"terminal-mirror/internal/tmux"
+	"control-agents/internal/registry"
+	"control-agents/internal/tmux"
 )
 
 func TestApplyResizeRequestRejectsMissingWebViewer(t *testing.T) {

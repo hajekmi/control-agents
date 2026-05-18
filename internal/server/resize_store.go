@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"terminal-mirror/internal/registry"
+	"control-agents/internal/registry"
 )
 
 const (

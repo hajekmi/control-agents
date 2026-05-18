@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"terminal-mirror/internal/registry"
+	"control-agents/internal/registry"
 )
 
 type SessionStore interface {
@@ -39,7 +39,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	target := &url.URL{Scheme: "http", Host: "terminal-mirror-ttyd"}
+	target := &url.URL{Scheme: "http", Host: "control-agents-ttyd"}
 	upstream := httputil.NewSingleHostReverseProxy(target)
 	upstream.Transport = &http.Transport{
 		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {

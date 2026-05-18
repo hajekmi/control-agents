@@ -1,6 +1,6 @@
 # Security Policy
 
-Terminal Mirror exposes authenticated browser access to live `tmux` sessions. Treat every deployment as remote shell access to the account running the managed sessions.
+Control Agents exposes authenticated browser access to live `tmux` sessions. Treat every deployment as remote shell access to the account running the managed sessions.
 
 ## Supported Versions
 
@@ -26,12 +26,12 @@ Do not include live passwords, cookies, private keys, terminal output containing
 
 ## Deployment Guidance
 
-- Use a strong, unique `MIRROR_PASSWORD`.
+- Use a strong, unique `CONTROL_AGENTS_PASSWORD`.
 - Prefer binding to a private interface, VPN, SSH tunnel, or trusted reverse proxy instead of exposing the service directly to the public internet.
 - Replace the generated self-signed certificate with a trusted TLS certificate for remote use.
 - Run the service as a dedicated, least-privileged user.
 - Keep `tmux`, `ttyd`, Go, and the host OS patched.
-- Review `~/.config/terminal-mirror/env` permissions and keep it readable only by the service user.
+- Review `~/.config/control-agents/env` permissions and keep it readable only by the service user.
 - Avoid running highly privileged shells or root sessions through the web UI.
 
 ## Known Sensitive Areas

@@ -9,7 +9,7 @@ import (
 
 	"log/slog"
 
-	"terminal-mirror/internal/config"
+	"control-agents/internal/config"
 )
 
 func TestUnauthenticatedAPIReturnsUnauthorized(t *testing.T) {

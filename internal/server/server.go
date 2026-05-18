@@ -14,13 +14,13 @@ import (
 	"strings"
 	"time"
 
-	"terminal-mirror/internal/auth"
-	"terminal-mirror/internal/compress"
-	"terminal-mirror/internal/config"
-	"terminal-mirror/internal/proxy"
-	"terminal-mirror/internal/registry"
-	"terminal-mirror/internal/tmux"
-	"terminal-mirror/internal/version"
+	"control-agents/internal/auth"
+	"control-agents/internal/compress"
+	"control-agents/internal/config"
+	"control-agents/internal/proxy"
+	"control-agents/internal/registry"
+	"control-agents/internal/tmux"
+	"control-agents/internal/version"
 )
 
 //go:embed static

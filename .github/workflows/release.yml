@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: make test
+      - run: node --check internal/server/static/app.js
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          version="${GITHUB_REF_NAME#v}"
+          commit="${GITHUB_SHA::7}"
+          build_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          ldvars="-X control-agents/internal/version.Version=${version} -X control-agents/internal/version.Commit=${commit} -X control-agents/internal/version.BuildDate=${build_date}"
+
+          for arch in amd64 arm64; do
+            GOOS=linux GOARCH="${arch}" CGO_ENABLED=0 go build -buildvcs=false -ldflags "${ldvars}" -o "dist/control-agents-server-linux-${arch}" ./cmd/server
+            cp bin/control-agents "dist/control-agents-linux-${arch}"
+            chmod 0755 "dist/control-agents-linux-${arch}"
+          done
+
+          (
+            cd dist
+            sha256sum * > sha256sums.txt
+          )
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --generate-notes
+          fi
+          gh release upload "${GITHUB_REF_NAME}" dist/* --clobber

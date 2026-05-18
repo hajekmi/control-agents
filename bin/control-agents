@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-STATE_DIR="${MIRROR_STATE_DIR:-"$HOME/.local/state/terminal-mirror"}"
+STATE_DIR="${CONTROL_AGENTS_STATE_DIR:-"$HOME/.local/state/control-agents"}"
 DEFAULT_SESSION_NAME="$(basename "$PWD")"
 SESSION_NAME="${1:-"$DEFAULT_SESSION_NAME"}"
-DISPLAY_NAME="${MIRROR_DISPLAY_NAME:-$SESSION_NAME}"
-APP_NAME="${MIRROR_APP_NAME:-$DISPLAY_NAME}"
-TMUX_WINDOW_SIZE="${MIRROR_TMUX_WINDOW_SIZE:-smallest}"
-TMUX_MOUSE="${MIRROR_TMUX_MOUSE:-off}"
-WEB_SCROLLBACK_LINES="${MIRROR_WEB_SCROLLBACK_LINES:-10000}"
+DISPLAY_NAME="${CONTROL_AGENTS_DISPLAY_NAME:-$SESSION_NAME}"
+APP_NAME="${CONTROL_AGENTS_APP_NAME:-$DISPLAY_NAME}"
+TMUX_WINDOW_SIZE="${CONTROL_AGENTS_TMUX_WINDOW_SIZE:-smallest}"
+TMUX_MOUSE="${CONTROL_AGENTS_TMUX_MOUSE:-off}"
+WEB_SCROLLBACK_LINES="${CONTROL_AGENTS_WEB_SCROLLBACK_LINES:-10000}"
 SESSION_ID="$(printf '%s' "$SESSION_NAME" | tr -c 'A-Za-z0-9._-' '-' | sed -E 's/^-+|-+$//g')"
 
 if [[ -z "$SESSION_ID" ]]; then
@@ -17,14 +17,14 @@ if [[ -z "$SESSION_ID" ]]; then
 fi
 
 if ! [[ "$WEB_SCROLLBACK_LINES" =~ ^[0-9]+$ ]]; then
-  echo "MIRROR_WEB_SCROLLBACK_LINES must be a non-negative integer" >&2
+  echo "CONTROL_AGENTS_WEB_SCROLLBACK_LINES must be a non-negative integer" >&2
   exit 2
 fi
 
 case "$TMUX_MOUSE" in
   on|off) ;;
   *)
-    echo "MIRROR_TMUX_MOUSE must be either on or off" >&2
+    echo "CONTROL_AGENTS_TMUX_MOUSE must be either on or off" >&2
     exit 2
     ;;
 esac
@@ -38,7 +38,7 @@ LOG_FILE="$LOG_DIR/$SESSION_ID.log"
 
 if [[ "${#SOCKET_PATH}" -gt 100 ]]; then
   echo "socket path is too long for a Unix domain socket: $SOCKET_PATH" >&2
-  echo "use a shorter MIRROR_STATE_DIR or session name" >&2
+  echo "use a shorter CONTROL_AGENTS_STATE_DIR or session name" >&2
   exit 2
 fi
 
@@ -108,7 +108,7 @@ JSON
 mv "$tmp_file" "$SESSION_FILE"
 chmod 600 "$SESSION_FILE"
 
-if [[ "${MIRROR_NO_ATTACH:-}" == "1" ]]; then
+if [[ "${CONTROL_AGENTS_NO_ATTACH:-}" == "1" ]]; then
   printf '%s\n' "$SESSION_ID"
   exit 0
 fi

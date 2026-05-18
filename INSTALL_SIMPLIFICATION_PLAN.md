@@ -1,6 +1,6 @@
 # Installation Simplification Plan
 
-This plan tracks work needed to make Terminal Mirror easier to install from a public GitHub repository.
+This plan tracks work needed to make Control Agents easier to install from a public GitHub repository.
 
 ## Goal
 
@@ -32,9 +32,11 @@ Initial targets:
 
 Artifacts:
 
-- `control-agents-server`
-- `control-agents`
-- checksums
+- `control-agents-server-linux-amd64`
+- `control-agents-linux-amd64`
+- `control-agents-server-linux-arm64`
+- `control-agents-linux-arm64`
+- `sha256sums.txt`
 
 Later targets:
 
@@ -48,8 +50,8 @@ Create a small installer that:
 - Detects OS and architecture.
 - Downloads the latest compatible GitHub release.
 - Installs binaries under `~/.local/bin`.
-- Creates `~/.config/terminal-mirror/env` if missing.
-- Generates a strong `MIRROR_PASSWORD`.
+- Creates `~/.config/control-agents/env` if missing.
+- Generates a strong `CONTROL_AGENTS_PASSWORD`.
 - Installs the systemd user unit under `~/.config/systemd/user`.
 - Runs `systemctl --user daemon-reload` when systemd is available.
 - Prints the generated URL, env file path, and next commands.
@@ -64,12 +66,12 @@ Preferred paths:
 
 - Server: `~/.local/bin/control-agents-server`
 - Wrapper: `~/.local/bin/control-agents`
-- Config: `~/.config/terminal-mirror/env`
+- Config: `~/.config/control-agents/env`
 - Service: `~/.config/systemd/user/control-agents.service`
 
 The installer should warn if `~/.local/bin` is not in `PATH`.
 
-### 4. Add Server Init Command
+### 4. Optional Later: Add Server Init Command
 
 Consider adding:
 
@@ -109,15 +111,11 @@ Add CI/release automation that:
 - Builds release binaries for supported platforms.
 - Uploads artifacts and checksums when a `v*` tag is pushed.
 
-### 7. Later: Package Managers
+### 7. Package Managers
 
-After the release process stabilizes, consider:
+Package managers are intentionally not part of the initial deployment path. Distro packages add repository, signing, upgrade, and uninstall complexity that is not needed for the first public install path.
 
-- Homebrew tap.
-- Debian/RPM packages.
-- Arch package.
-
-Do this after release binaries and `install.sh` are proven.
+Reconsider only after release binaries and `install.sh` are proven.
 
 ## README Changes
 
@@ -134,7 +132,11 @@ Keep source build instructions as an advanced path.
 
 ## Open Decisions
 
-- Whether `install.sh` should install only the latest release or allow `VERSION=...`.
-- Whether the wrapper should ever install to `/usr/local/bin` automatically.
-- Whether macOS should use launchd support or stay manual initially.
-- Whether generated passwords should be printed once or only written to the env file.
+- macOS support remains out of scope for the initial installer.
+
+## Resolved Decisions
+
+- `install.sh` installs the latest release by default and supports `VERSION=...`.
+- Public install paths are user-local; the wrapper is not installed to `/usr/local/bin` automatically.
+- The generated password is written to `~/.config/control-agents/env`, not printed.
+- Legacy `terminal-mirror` paths and `MIRROR_*` variables are not supported as fallbacks.

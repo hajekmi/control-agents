@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"terminal-mirror/internal/registry"
+	"control-agents/internal/registry"
 )
 
 func TestProxyForwardsHTTPToUnixSocket(t *testing.T) {

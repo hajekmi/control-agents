@@ -1,8 +1,40 @@
-# Terminal Mirror
+# Control Agents
 
-Terminal Mirror exposes wrapper-started tmux sessions through one password-protected web app. Each terminal session runs its own `ttyd` instance on a private Unix domain socket, while the Go service provides login, tab discovery, and reverse proxying.
+Control Agents exposes wrapper-started tmux sessions through one password-protected web app. Each terminal session runs its own `ttyd` instance on a private Unix domain socket, while the Go service provides login, tab discovery, and reverse proxying.
 
 It is optimized for mobile touch displays, especially iOS Safari and iPadOS browsers: the web UI includes touch history scrolling, a selectable Copy mode, Paste support, special-key buttons, and viewport handling for the software keyboard.
+
+## Quick Install
+
+Linux user-local install:
+
+```sh
+sudo apt install tmux ttyd
+curl -fsSL https://raw.githubusercontent.com/hajekmi/control-agents/main/install.sh | sh
+systemctl --user enable --now control-agents.service
+control-agents main
+```
+
+Then open:
+
+```text
+https://<vm-host-or-ip>:8080
+```
+
+The installer downloads the latest GitHub Release binaries, installs them under `~/.local/bin`, creates `~/.config/control-agents/env` with a generated `CONTROL_AGENTS_PASSWORD`, installs the user systemd unit, and runs `systemctl --user daemon-reload` when available.
+
+Review the generated config before exposing the service:
+
+```sh
+chmod 600 ~/.config/control-agents/env
+sed -n '1,80p' ~/.config/control-agents/env
+```
+
+If the service should start after boot before the user logs in, enable lingering for that user:
+
+```sh
+loginctl enable-linger "$USER"
+```
 
 ## Requirements
 
@@ -10,21 +42,13 @@ Runtime:
 
 - `tmux` for shared terminal sessions.
 - `ttyd` for browser terminal I/O.
+- systemd user services for the default service setup.
 
 Development:
 
 - Go 1.25 or newer can build the module, but release/security builds should use the latest stable Go toolchain. As of 2026-05-16, the official stable release is Go 1.26.3.
 - `make` for the provided workflow.
 - Node.js 20, 22, or 24 plus npm for Playwright browser E2E tests.
-
-On this VM, `tmux` and `ttyd` are expected to come from Homebrew. Node.js is already available from the system package set, but Homebrew `node@22` also works:
-
-```sh
-brew install tmux ttyd
-# optional when system node is unavailable or too old:
-brew install node@22
-export PATH="/home/linuxbrew/.linuxbrew/opt/node@22/bin:$PATH"
-```
 
 Playwright is a project-local dev dependency. Install JavaScript dependencies from the repo root:
 
@@ -39,9 +63,9 @@ On AlmaLinux/RHEL-like hosts, Chromium also needs system libraries. If `make tes
 sudo dnf install -y nspr nss atk at-spi2-atk at-spi2-core cups-libs libxcb libxkbcommon alsa-lib mesa-libgbm libX11 libXext cairo pango libXcomposite libXdamage libXfixes libXrandr
 ```
 
-## Installation
+## Source Install
 
-Install the runtime and build prerequisites on the target host:
+Use this path when developing locally or installing without release binaries. Install the runtime and build prerequisites on the target host:
 
 - Go 1.25 or newer
 - `make`
@@ -57,35 +81,16 @@ cd control-agents
 make install
 ```
 
-`make install` creates `~/.config/terminal-mirror/env` with a generated `MIRROR_PASSWORD` if the file does not already exist. Review it before exposing the service:
-
-```sh
-chmod 600 ~/.config/terminal-mirror/env
-sed -n '1,80p' ~/.config/terminal-mirror/env
-```
-
-Enable and start the user service:
+Enable and start:
 
 ```sh
 systemctl --user enable --now control-agents.service
-```
-
-If the service should start after boot before the user logs in, enable lingering for that user:
-
-```sh
-loginctl enable-linger "$USER"
 ```
 
 Start a mirrored terminal session from any working directory:
 
 ```sh
 control-agents main
-```
-
-Then open:
-
-```text
-https://<vm-host-or-ip>:8080
 ```
 
 ## Build And Test
@@ -138,17 +143,19 @@ Release checklist:
 ```sh
 make test
 git tag -a v2026.5.1 -m "Release 2026.5.1"
-make build
+git push origin v2026.5.1
 ```
+
+Tag pushes run the release workflow, build Linux `amd64` and `arm64` assets, and upload checksums for `install.sh`.
 
 ## Run Locally
 
 Start the web service:
 
 ```sh
-export MIRROR_PASSWORD='change-me'
-export MIRROR_BIND_ADDR='0.0.0.0'
-export MIRROR_PORT='8080'
+export CONTROL_AGENTS_PASSWORD='change-me'
+export CONTROL_AGENTS_BIND_ADDR='0.0.0.0'
+export CONTROL_AGENTS_PORT='8080'
 make run
 ```
 
@@ -174,26 +181,26 @@ New sessions started with `bin/control-agents <name>` appear as tabs automatical
 
 The Go service reads:
 
-- `MIRROR_BIND_ADDR`, default `0.0.0.0`
-- `MIRROR_PORT`, default `8080`
-- `MIRROR_PASSWORD`, required unless `MIRROR_PASSWORD_FILE` is set
-- `MIRROR_PASSWORD_FILE`, optional newline-trimmed password file
-- `MIRROR_STATE_DIR`, default `$HOME/.local/state/terminal-mirror`
-- `MIRROR_TLS_CERT_FILE`, default `$MIRROR_STATE_DIR/certs/server.crt`
-- `MIRROR_TLS_KEY_FILE`, default `$MIRROR_STATE_DIR/certs/server.key`
-- `MIRROR_AUTH_SECRET_FILE`, default `$MIRROR_STATE_DIR/auth/session.key`
-- `MIRROR_COOKIE_SECURE`, default `true` for HTTPS
-- `MIRROR_COOKIE_TTL_SECONDS`, default `172800`
+- `CONTROL_AGENTS_BIND_ADDR`, default `0.0.0.0`
+- `CONTROL_AGENTS_PORT`, default `8080`
+- `CONTROL_AGENTS_PASSWORD`, required unless `CONTROL_AGENTS_PASSWORD_FILE` is set
+- `CONTROL_AGENTS_PASSWORD_FILE`, optional newline-trimmed password file
+- `CONTROL_AGENTS_STATE_DIR`, default `$HOME/.local/state/control-agents`
+- `CONTROL_AGENTS_TLS_CERT_FILE`, default `$CONTROL_AGENTS_STATE_DIR/certs/server.crt`
+- `CONTROL_AGENTS_TLS_KEY_FILE`, default `$CONTROL_AGENTS_STATE_DIR/certs/server.key`
+- `CONTROL_AGENTS_AUTH_SECRET_FILE`, default `$CONTROL_AGENTS_STATE_DIR/auth/session.key`
+- `CONTROL_AGENTS_COOKIE_SECURE`, default `true` for HTTPS
+- `CONTROL_AGENTS_COOKIE_TTL_SECONDS`, default `172800`
 
 The wrapper reads:
 
-- `MIRROR_STATE_DIR`, same default as the service
-- `MIRROR_DISPLAY_NAME`, optional label for the browser tab
-- `MIRROR_APP_NAME`, optional override for tmux status-left; default is the session display name
-- `MIRROR_TMUX_WINDOW_SIZE`, default `smallest`
-- `MIRROR_TMUX_MOUSE`, default `off`
-- `MIRROR_WEB_SCROLLBACK_LINES`, default `10000`
-- `MIRROR_NO_ATTACH=1`, test/support mode that registers the session without attaching the current terminal
+- `CONTROL_AGENTS_STATE_DIR`, same default as the service
+- `CONTROL_AGENTS_DISPLAY_NAME`, optional label for the browser tab
+- `CONTROL_AGENTS_APP_NAME`, optional override for tmux status-left; default is the session display name
+- `CONTROL_AGENTS_TMUX_WINDOW_SIZE`, default `smallest`
+- `CONTROL_AGENTS_TMUX_MOUSE`, default `off`
+- `CONTROL_AGENTS_WEB_SCROLLBACK_LINES`, default `10000`
+- `CONTROL_AGENTS_NO_ATTACH=1`, test/support mode that registers the session without attaching the current terminal
 
 The shared state directory contains:
 
@@ -203,15 +210,15 @@ The shared state directory contains:
 - `auth/session.key` persistent cookie signing secret
 - `certs/server.crt` and `certs/server.key` when the default generated TLS files are used
 
-Keep `MIRROR_STATE_DIR` reasonably short. Unix domain socket paths have a small system limit, and the wrapper fails early when the generated socket path is too long.
+Keep `CONTROL_AGENTS_STATE_DIR` reasonably short. Unix domain socket paths have a small system limit, and the wrapper fails early when the generated socket path is too long.
 
-`MIRROR_WEB_SCROLLBACK_LINES` controls browser-side terminal history retained by `ttyd`/xterm.js while the web tab is connected. It does not replay tmux output that happened before the browser connected.
+`CONTROL_AGENTS_WEB_SCROLLBACK_LINES` controls browser-side terminal history retained by `ttyd`/xterm.js while the web tab is connected. It does not replay tmux output that happened before the browser connected.
 
-Because the browser is attached to tmux, `control-agents` keeps `MIRROR_TMUX_MOUSE=off` by default so normal terminal text selection works without tmux intercepting mouse drag. The parent web app captures vertical wheel events and single-finger touch swipes over the terminal iframe and sends them to the tmux scroll API, so history scrolls without sending arrow-key events to the shell prompt. On touch devices, use `Menu` -> `Copy mode` to open a selectable text capture of the active terminal instead of swipe history scrolling, then `Menu` -> `Paste` to paste clipboard text back into the active pane. Start or refresh a session with `MIRROR_TMUX_MOUSE=on` only if you prefer tmux to own all mouse handling.
+Because the browser is attached to tmux, `control-agents` keeps `CONTROL_AGENTS_TMUX_MOUSE=off` by default so normal terminal text selection works without tmux intercepting mouse drag. The parent web app captures vertical wheel events and single-finger touch swipes over the terminal iframe and sends them to the tmux scroll API, so history scrolls without sending arrow-key events to the shell prompt. On touch devices, use `Menu` -> `Copy mode` to open a selectable text capture of the active terminal instead of swipe history scrolling, then `Menu` -> `Paste` to paste clipboard text back into the active pane. Start or refresh a session with `CONTROL_AGENTS_TMUX_MOUSE=on` only if you prefer tmux to own all mouse handling.
 
-The default `MIRROR_TMUX_WINDOW_SIZE=smallest` keeps browser and SSH clients on the same full tmux screen, which is important for fullscreen terminal apps such as Midnight Commander. The web Resize panel can override the active session's live resize source without changing this startup default. If you override the wrapper default to `largest`, `latest`, or `manual`, the right-side web scrollbar also accounts for tmux client window offset when a smaller browser or SSH client is panned inside a taller tmux window. The server accounts for tmux's status line when calculating the visible pane height so returning the scrollbar to the bottom lands back on the live prompt, not behind the status line.
+The default `CONTROL_AGENTS_TMUX_WINDOW_SIZE=smallest` keeps browser and SSH clients on the same full tmux screen, which is important for fullscreen terminal apps such as Midnight Commander. The web Resize panel can override the active session's live resize source without changing this startup default. If you override the wrapper default to `largest`, `latest`, or `manual`, the right-side web scrollbar also accounts for tmux client window offset when a smaller browser or SSH client is panned inside a taller tmux window. The server accounts for tmux's status line when calculating the visible pane height so returning the scrollbar to the bottom lands back on the live prompt, not behind the status line.
 
-`control-agents` also sets a compact tmux status line for managed sessions. The left side shows the session label, for example `[ahoj]` when started with `bin/control-agents ahoj`, and the right side shows the current pane directory through `#{pane_current_path}` without hostname, date, or time. Override the label with `MIRROR_APP_NAME`.
+`control-agents` also sets a compact tmux status line for managed sessions. The left side shows the session label, for example `[ahoj]` when started with `bin/control-agents ahoj`, and the right side shows the current pane directory through `#{pane_current_path}` without hostname, date, or time. Override the label with `CONTROL_AGENTS_APP_NAME`.
 
 ## API
 
@@ -254,7 +261,7 @@ Example `GET /api/sessions` response:
       "id": "main",
       "name": "main",
       "tmuxName": "main",
-      "socket": "/home/user/.local/state/terminal-mirror/sockets/main.sock",
+      "socket": "/home/user/.local/state/control-agents/sockets/main.sock",
       "pid": 1234,
       "cwd": "/home/user/project",
       "createdAt": "2026-05-15T20:12:14Z"
@@ -263,7 +270,7 @@ Example `GET /api/sessions` response:
 }
 ```
 
-Successful login sets the `terminal_mirror_session` cookie. The cookie is signed with a persistent secret stored under the state directory, so sessions remain valid across server restarts until `MIRROR_COOKIE_TTL_SECONDS` expires or the auth secret file is removed.
+Successful login sets the `control_agents_session` cookie. The cookie is signed with a persistent secret stored under the state directory, so sessions remain valid across server restarts until `CONTROL_AGENTS_COOKIE_TTL_SECONDS` expires or the auth secret file is removed.
 
 Failed logins are rate-limited in server memory per direct client IP: 10 failed attempts in 5 minutes returns `429 Too Many Requests` with `Retry-After`. A successful login clears that IP's failures, and restarting the daemon resets the limiter.
 
@@ -352,15 +359,15 @@ Install the binary and user systemd unit:
 make install
 ```
 
-`make install` also creates `~/.config/terminal-mirror/env` with a generated password when it does not already exist. Edit it if you want a custom password or bind address:
+`make install` also creates `~/.config/control-agents/env` with a generated password when it does not already exist. Edit it if you want a custom password or bind address:
 
 ```sh
-MIRROR_PASSWORD=<generated>
-MIRROR_BIND_ADDR=0.0.0.0
-MIRROR_PORT=8080
+CONTROL_AGENTS_PASSWORD=<generated>
+CONTROL_AGENTS_BIND_ADDR=0.0.0.0
+CONTROL_AGENTS_PORT=8080
 ```
 
-The same target installs the server as `~/.local/bin/control-agents-server` and the wrapper client as `/usr/local/bin/control-agents`, using `sudo` for the client when `/usr/local/bin` is not writable. Override paths with `SERVER_INSTALL=/path/to/control-agents-server` and `CLIENT_INSTALL=/path/to/control-agents` if needed.
+The same target installs the server as `~/.local/bin/control-agents-server` and the wrapper client as `~/.local/bin/control-agents`. Override paths with `SERVER_INSTALL=/path/to/control-agents-server` and `CLIENT_INSTALL=/path/to/control-agents` if needed.
 
 Enable and start:
 
@@ -386,7 +393,7 @@ Uninstall the binary and user systemd unit:
 make uninstall
 ```
 
-`make uninstall` does not remove `~/.config/terminal-mirror/env` or the state directory.
+`make uninstall` does not remove `~/.config/control-agents/env` or the state directory.
 
 ## Podman Notes
 
@@ -403,10 +410,10 @@ Example run shape:
 ```sh
 podman run --rm \
   -p 8080:8080 \
-  -e MIRROR_PASSWORD=change-me \
-  -e MIRROR_BIND_ADDR=0.0.0.0 \
-  -e MIRROR_STATE_DIR=/state \
-  -v "$HOME/.local/state/terminal-mirror:/state:Z" \
+  -e CONTROL_AGENTS_PASSWORD=change-me \
+  -e CONTROL_AGENTS_BIND_ADDR=0.0.0.0 \
+  -e CONTROL_AGENTS_STATE_DIR=/state \
+  -v "$HOME/.local/state/control-agents:/state:Z" \
   control-agents-server
 ```
 
@@ -418,7 +425,7 @@ In the container path only the Go server belongs in the container. `control-agen
 
 See [`SECURITY.md`](SECURITY.md) for supported versions, vulnerability reporting, threat model notes, and deployment guidance.
 
-The service uses HTTPS by default with an automatically generated self-signed ECC certificate and accepts TLS 1.3 only. Older protocol versions, including TLS 1.2, are disabled. The password, cookies, terminal output, and terminal input are encrypted on the wire, but the browser cannot verify a self-signed certificate until you trust it locally or configure `MIRROR_TLS_CERT_FILE` and `MIRROR_TLS_KEY_FILE` with a certificate from a trusted authority.
+The service uses HTTPS by default with an automatically generated self-signed ECC certificate and accepts TLS 1.3 only. Older protocol versions, including TLS 1.2, are disabled. The password, cookies, terminal output, and terminal input are encrypted on the wire, but the browser cannot verify a self-signed certificate until you trust it locally or configure `CONTROL_AGENTS_TLS_CERT_FILE` and `CONTROL_AGENTS_TLS_KEY_FILE` with a certificate from a trusted authority.
 
 Go-served pages and API responses include security headers: CSP for the app shell, `X-Frame-Options: SAMEORIGIN`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`, and a restrictive `Permissions-Policy`. CSP is not applied to `/terminal/` proxy responses so embedded `ttyd` assets keep working.
 
@@ -430,16 +437,16 @@ ssh -L 8080:127.0.0.1:8080 user@vm
 
 ## License
 
-Terminal Mirror is licensed under the GNU Affero General Public License v3.0. See [`LICENSE`](LICENSE).
+Control Agents is licensed under the GNU Affero General Public License v3.0. See [`LICENSE`](LICENSE).
 
 ## Troubleshooting
 
-- No tabs appear: start sessions through `bin/control-agents <name>` and confirm service and wrapper use the same `MIRROR_STATE_DIR`.
-- No tabs appear but `<state-dir>/sockets/<session>.sock` exists: reinstall and restart the systemd unit so the service gets the managed `PATH` that includes Homebrew `tmux`.
+- No tabs appear: start sessions through `bin/control-agents <name>` and confirm service and wrapper use the same `CONTROL_AGENTS_STATE_DIR`.
+- No tabs appear but `<state-dir>/sockets/<session>.sock` exists: reinstall and restart the systemd unit so the service gets the managed `PATH` that includes `tmux` and `ttyd`.
 - Tab opens but terminal is unavailable: check `<state-dir>/logs/<session>.log` for `ttyd` errors.
 - Session disappears: the service removes stale registry files when the `ttyd` PID, tmux session, or Unix socket is gone.
 - Browser and SSH sizes differ: both clients attach to the same tmux session. The wrapper sets tmux `window-size` to `smallest` by default so fullscreen apps render the same complete screen in every client. Use Menu -> Resize to choose whether the session should stay off, use automatic smallest-client sizing, follow a browser viewer, or follow the primary SSH/tmux client. Explicit web and primary modes use tmux manual sizing, not `window-size latest`.
-- Browser history is too short while the web tab is connected: increase `MIRROR_WEB_SCROLLBACK_LINES` before starting `bin/control-agents <name>`, then reconnect the web tab.
+- Browser history is too short while the web tab is connected: increase `CONTROL_AGENTS_WEB_SCROLLBACK_LINES` before starting `bin/control-agents <name>`, then reconnect the web tab.
 - Mouse wheel cycles shell command history: reinstall and restart the service so the current web UI captures terminal wheel events. Use the right-side web scrollbar on browsers where iframe wheel handling is unreliable.
 - Use the right-side web scrollbar to scroll tmux pane history and small-client live-window overflow directly.
 - On narrow mobile screens, the terminal area has horizontal scrolling so the tmux pane can keep a usable width without rotating the device.
