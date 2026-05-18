@@ -133,11 +133,18 @@ install_binaries() {
   platform="$(detect_platform)"
   tmp_dir="$(make_tmp_dir)"
   trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
+  server_file="$tmp_dir/control-agents-server"
+  client_file="$tmp_dir/control-agents"
 
   if [ -n "${LOCAL_BIN_DIR:-}" ]; then
-    cp "$LOCAL_BIN_DIR/control-agents-server" "$tmp_dir/control-agents-server"
-    cp "$LOCAL_BIN_DIR/control-agents" "$tmp_dir/control-agents"
+    cp "$LOCAL_BIN_DIR/control-agents-server" "$server_file"
+    cp "$LOCAL_BIN_DIR/control-agents" "$client_file"
   else
+    server_asset="control-agents-server-$platform"
+    client_asset="control-agents-$platform"
+    server_file="$tmp_dir/$server_asset"
+    client_file="$tmp_dir/$client_asset"
+
     if [ "$VERSION" = "latest" ]; then
       base_url="https://github.com/$REPO/releases/latest/download"
     else
@@ -148,8 +155,8 @@ install_binaries() {
       base_url="https://github.com/$REPO/releases/download/$tag"
     fi
 
-    download "$base_url/control-agents-server-$platform" "$tmp_dir/control-agents-server"
-    download "$base_url/control-agents-$platform" "$tmp_dir/control-agents"
+    download "$base_url/$server_asset" "$server_file"
+    download "$base_url/$client_asset" "$client_file"
     if download_optional "$base_url/sha256sums.txt" "$tmp_dir/sha256sums.txt"; then
       if command -v sha256sum >/dev/null 2>&1; then
         (
@@ -165,8 +172,8 @@ install_binaries() {
   fi
 
   mkdir -p "$BIN_DIR"
-  install -m 0755 "$tmp_dir/control-agents-server" "$BIN_DIR/control-agents-server"
-  install -m 0755 "$tmp_dir/control-agents" "$BIN_DIR/control-agents"
+  install -m 0755 "$server_file" "$BIN_DIR/control-agents-server"
+  install -m 0755 "$client_file" "$BIN_DIR/control-agents"
 }
 
 check_runtime_dependencies() {

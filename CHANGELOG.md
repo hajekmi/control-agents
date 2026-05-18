@@ -2,6 +2,10 @@
 
 Versions use calendar numbering: `YYYY.M.REVISION`.
 
+## Unreleased
+
+- Fix `install.sh` checksum verification by preserving release asset filenames until after `sha256sum` validation.
+
 ## 2026.5.16 - 2026-05-18
 
 - Publish the install simplification release from the fixed GitHub Actions workflow.
