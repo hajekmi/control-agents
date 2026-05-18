@@ -2,6 +2,10 @@
 
 Versions use calendar numbering: `YYYY.M.REVISION`.
 
+## 2026.5.21 - 2026-05-18
+
+- Make `control-agents <name>` attach to the tmux session by default again; use `--no-attach` for register-and-exit scripts.
+
 ## 2026.5.20 - 2026-05-18
 
 - Add user-service journal logging for stale session cleanup reasons.

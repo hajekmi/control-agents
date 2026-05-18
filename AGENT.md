@@ -22,8 +22,10 @@ documentation. Keep this file focused on working rules for future agents.
 - `control-agents-server` owns auth, API, static UI, session discovery, and
   proxying.
 - `control-agents` owns tmux session creation, `ttyd` startup, and registry
-  file creation. It should register and exit by default; local tmux attachment
-  must stay explicit through `--attach` or `CONTROL_AGENTS_ATTACH=1`.
+  file creation. It should attach the current terminal by default after
+  registering the web session. Non-interactive register-and-exit mode must stay
+  available through `--no-attach` or `CONTROL_AGENTS_NO_ATTACH=1` for tests and
+  scripts.
 - The right-side web scrollbar and touch swipe history scrolling are owned by
   the parent app, not by ttyd. They call server tmux-scroll APIs and should keep
   working even when iframe wheel events are unreliable on mobile browsers. The

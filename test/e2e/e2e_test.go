@@ -112,6 +112,7 @@ func TestClientDefaultsSessionNameToCurrentDirectory(t *testing.T) {
 	wrapper.Dir = workDir
 	wrapper.Env = append(os.Environ(),
 		"CONTROL_AGENTS_STATE_DIR="+stateDir,
+		"CONTROL_AGENTS_NO_ATTACH=1",
 	)
 	output, err := wrapper.CombinedOutput()
 	if err != nil {
