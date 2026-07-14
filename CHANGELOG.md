@@ -2,6 +2,90 @@
 
 Versions use calendar numbering: `YYYY.M.REVISION`.
 
+## Unreleased
+
+- Add repository-owned History parser/snapshot/Paste matrices, real-tmux
+  50,000-line SSH-isolation and alternate-screen fixtures, Chromium/Firefox/
+  WebKit engine coverage, mobile/tablet viewport automation, and bounded
+  content-free server/browser benchmark reports with explicit unsupported
+  metrics and pending physical-Safari release gates. Run the managed-lifecycle
+  secondary-viewer lifecycle, and mobile/two-viewer profiles in separate fresh
+  fixture invocations, isolate the synthetic request-failure probe after
+  functional mutations, give each invocation one bounded process owner that
+  proves browser/server/ttyd/tmux teardown before the next profile, use a fresh
+  browser process for each independent scenario, isolate complete Linux
+  profiles from ambient host network-change notifications in a private
+  loopback-only namespace with an exactly-once boundary gate, and keep failure
+  diagnostics content-free with disabled rich artifacts plus an
+  intentional-failure canary scanner.
+- Harden browser terminal access with login-bound CSRF tokens, exact WebSocket
+  origin checks, self-only application CSP, an external ttyd transport observer,
+  and terminal framing restrictions.
+- Strictly bound and decode authenticated mutation bodies, reject malformed
+  serialized origins, cap retained resize-viewer metadata and state, and
+  reconcile existing authentication-secret permissions before use.
+- Add snapshot capture timeout, scoped create-rate, per-login/process capture
+  concurrency, bounded coalesced waiters, and process node-estimate budgets;
+  also add visible bidi-control markers, content-free parser measurements,
+  private ttyd socket modes, and compatible user-service sandboxing/core limits.
+- Add digest-bound, short-lived single-use Paste tokens and stdin-only random
+  tmux buffers with unconditional cleanup and literal bracketed-paste framing;
+  reject invalid UTF-8, NUL, oversize, replayed, and stale Paste actions.
+- Add Safari-first native History scrolling and selection, upward-wheel and
+  PageUp entry with local trackpad inertia, and a tab-local
+  `History`/`Application` scroll-gesture preference for mouse-reporting apps.
+- Add a reviewed Paste flow with UTF-8 byte and logical-line counts, explicit
+  multiline/control-character confirmation, a visible iOS system-Paste
+  textarea fallback, and no automatic retry after denial, cancel, or failure.
+- Separate transient `visualViewport` keyboard changes from stable layout and
+  orientation resize dispatch so opening or closing the iOS keyboard does not
+  resize the tmux grid or signal the terminal application.
+- BREAKING: Replace remote tmux copy-mode scrolling and the standalone capture
+  panel with bounded immutable local History snapshots, structured server-side
+  ANSI parsing, progressive browser materialization, native selection/Copy,
+  and a new-output indicator while the ttyd Live stream remains connected.
+- BREAKING: Remove the legacy `/scroll` and `/capture` routes. Add opaque,
+  login/viewer/generation-scoped History snapshot create/page/delete APIs with
+  idle expiry and count, memory, line, byte, and ANSI-run limits.
+- BREAKING: Replace canonical session names, raw tmux targets, and window
+  indexes in browser routes and mutation payloads with opaque session, window,
+  pane, and viewer references backed by pane-generation verification.
+- BREAKING: Change the managed tmux window-size default from `smallest` to
+  `manual` and replace the previous resize-source modes with `Fixed`, one-shot
+  `Fit once`, and a disabled future `Follow this device` capability. Existing
+  managed windows are reconciled without changing dimensions, and a
+  session-local hook makes every newly linked managed window manual immediately.
+- Set the exact managed tmux session history default to 50,000 lines before its
+  durable user pane is created and during reconciliation without changing the
+  global default used by unmanaged sessions. Bound History captures to 32
+  MiB by default; increasing an existing pane limit does not restore discarded
+  output.
+- Add metadata-only terminal audit records and regression coverage proving that
+  terminal/Paste canaries do not enter application or ttyd logging output.
+- BREAKING: Make no-argument `control-agents` open an interactive managed-session selector instead of deriving a session name from the current directory.
+- BREAKING: Restrict authenticated session JSON to browser-required fields;
+  bridge PIDs, Unix socket paths, and tmux internals are no longer returned.
+- BREAKING: Make managed registry identity canonical across the record ID,
+  name, tmux session, and state-owned socket. Safe legacy display-name records
+  migrate in place; records with unsafe identity mismatches are ignored rather
+  than adopted.
+- Replace the Bash SSH client with an architecture-specific Go binary that shares the managed-session lifecycle, supports direct named and register-only modes, and returns to the selector after tmux detach.
+- Add authenticated same-origin managed-session create and terminate APIs with
+  strict confirmation, bounded inputs, lifecycle serialization, and a
+  configurable web creation limit.
+- Add compact web Menu dialogs for creating `$HOME` sessions and explicitly
+  confirming destructive termination, with deterministic tab/iframe
+  reconciliation across clients.
+- Recover missing `ttyd` bridges and migrate compatible legacy registry records
+  during server startup/list reconciliation without recreating live tmux
+  sessions or importing unmanaged sessions.
+- Add a private stable forwarded SSH agent socket for managed tmux sessions,
+  with atomic reconnect refresh, initial and future-pane inheritance, concise
+  CLI availability status, and fake-socket regression coverage.
+- Stage and verify architecture-matched Linux `amd64` and `arm64` Go client and
+  server release assets with mandatory per-asset checksum verification in the
+  user-local installer.
+
 ## 2026.5.21 - 2026-05-18
 
 - Make `control-agents <name>` attach to the tmux session by default again; use `--no-attach` for register-and-exit scripts.

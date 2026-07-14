@@ -15,12 +15,21 @@
         <div id="actions-menu" class="actions-menu">
           <button type="button" id="actions-toggle" class="secondary menu-button" aria-controls="actions-popover" aria-expanded="false">Menu</button>
           <div id="actions-popover" class="actions-popover" hidden>
+            <button type="button" id="new-session-toggle" class="action-menu-item">New session</button>
+            <button type="button" id="terminate-session-toggle" class="action-menu-item danger-menu-item" disabled>Terminate session</button>
             <button type="button" id="keys-toggle" class="action-menu-item" aria-controls="key-panel" aria-expanded="false">Keys</button>
             <button type="button" id="tcontrol-toggle" class="action-menu-item" aria-controls="tcontrol-panel" aria-expanded="false">T-Control</button>
             <button type="button" id="resize-toggle" class="action-menu-item" aria-controls="resize-panel" aria-expanded="false">Resize</button>
-            <button type="button" id="copy-mode-toggle" class="action-menu-item" aria-pressed="false">Copy mode</button>
+            <button type="button" id="history-toggle" class="action-menu-item" aria-pressed="false">History</button>
             <button type="button" id="paste-toggle" class="action-menu-item">Paste</button>
-            <form method="post" action="/logout">
+            <label class="action-menu-setting" for="scroll-gesture-mode">
+              <span>Scroll gesture</span>
+              <select id="scroll-gesture-mode" aria-label="Scroll gesture">
+                <option value="history">History</option>
+                <option value="application">Application</option>
+              </select>
+            </label>
+            <form id="logout-form" method="post" action="/logout">
               <button type="submit" class="action-menu-item">Sign out</button>
             </form>
           </div>
@@ -31,19 +40,30 @@
       <section id="terminal-pane" class="terminal-pane">
         <div id="empty-state" class="empty-state">No mirrored terminals are registered.</div>
         <div id="terminal-strip" class="terminal-strip"></div>
-        <div id="history-scrollbar" class="history-scrollbar" aria-label="Terminal history scrollbar" hidden>
-          <button type="button" id="scroll-top" class="scroll-button" title="History top" aria-label="History top">^</button>
-          <div id="history-track" class="history-track" role="scrollbar" aria-orientation="vertical" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" tabindex="0">
-            <div id="history-thumb" class="history-thumb"></div>
+        <aside id="history-overlay" class="history-overlay" role="region" aria-label="Terminal history" tabindex="0" hidden>
+          <div class="history-header">
+            <div class="history-title-row">
+              <h2>History</h2>
+              <button type="button" id="history-new-output" class="history-new-output" aria-live="polite" aria-atomic="true" hidden>New output</button>
+            </div>
+            <div class="history-actions" role="group" aria-label="History actions">
+              <button type="button" id="history-paste" class="history-mode">Paste</button>
+              <button type="button" id="history-reflow" class="history-mode active" aria-pressed="true">Reflow</button>
+              <button type="button" id="history-fixed" class="history-mode" aria-pressed="false">Fixed grid</button>
+              <button type="button" id="history-close" class="key-panel-close" title="Return to Live" aria-label="Return to Live">x</button>
+            </div>
           </div>
-          <button type="button" id="scroll-bottom" class="scroll-button" title="Live bottom" aria-label="Live bottom">v</button>
-        </div>
-        <aside id="copy-panel" class="copy-panel" role="dialog" aria-label="Copy terminal text" hidden>
-          <div class="copy-panel-header">
-            <h2>Copy mode</h2>
-            <button type="button" id="copy-close" class="key-panel-close" title="Close copy panel" aria-label="Close copy panel">x</button>
-          </div>
-          <pre id="copy-text" class="copy-text" tabindex="0"></pre>
+          <section id="history-paste-panel" class="history-paste-panel" aria-labelledby="history-paste-title" hidden>
+            <div class="history-paste-heading">
+              <strong id="history-paste-title">Paste</strong>
+              <span id="history-paste-status" role="status" aria-live="polite"></span>
+            </div>
+            <label for="history-paste-fallback">Paste text from the system menu</label>
+            <textarea id="history-paste-fallback" rows="3" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Touch and hold, then choose Paste"></textarea>
+            <p>Clipboard text is staged for review and is never sent from this field.</p>
+          </section>
+          <div id="history-notice" class="history-notice" hidden></div>
+          <div id="history-content" class="history-content reflow" aria-live="off"></div>
         </aside>
         <aside id="key-panel" class="key-panel" aria-label="Special keys" hidden>
           <div class="key-panel-header">
@@ -67,20 +87,16 @@
           </div>
           <div id="resize-modes" class="resize-modes" role="radiogroup" aria-label="Tmux resize mode">
             <label class="resize-mode-option">
-              <input type="radio" name="resize-mode" value="off">
-              <span>Off</span>
+              <input type="radio" name="resize-mode" value="fixed">
+              <span>Fixed</span>
             </label>
             <label class="resize-mode-option">
-              <input type="radio" name="resize-mode" value="smallest">
-              <span>Automatic smallest</span>
+              <input type="radio" name="resize-mode" value="fit-once">
+              <span>Fit once</span>
             </label>
-            <label class="resize-mode-option">
-              <input type="radio" name="resize-mode" value="web">
-              <span>Follow web window</span>
-            </label>
-            <label class="resize-mode-option">
-              <input type="radio" name="resize-mode" value="primary">
-              <span>Follow primary SSH/tmux</span>
+            <label class="resize-mode-option disabled" title="Planned for a later stage">
+              <input type="radio" name="resize-mode" value="follow-device" disabled>
+              <span>Follow this device (later)</span>
             </label>
           </div>
           <section class="resize-section" aria-labelledby="resize-viewers-title">
@@ -88,7 +104,7 @@
             <div id="resize-viewers" class="resize-viewers"></div>
           </section>
           <section class="resize-section" aria-labelledby="resize-primary-title">
-            <h3 id="resize-primary-title">Primary SSH/tmux</h3>
+            <h3 id="resize-primary-title">Current window</h3>
             <div id="resize-primary" class="resize-primary"></div>
           </section>
           <div class="resize-panel-footer">
@@ -98,6 +114,44 @@
         </aside>
       </section>
     </main>
+    <dialog id="create-session-dialog" class="lifecycle-dialog" aria-labelledby="create-session-title" aria-describedby="create-session-help create-session-status">
+      <form id="create-session-form">
+        <h2 id="create-session-title">New session</h2>
+        <label for="create-session-name">Session name</label>
+        <input type="text" id="create-session-name" name="name" maxlength="64" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="create-session-help create-session-status">
+        <p id="create-session-help" class="dialog-help">Use letters, digits, dot, underscore, or hyphen; start with a letter or digit; maximum 64 characters.</p>
+        <div id="create-session-status" class="dialog-status" role="status" aria-live="polite"></div>
+        <div class="dialog-actions">
+          <button type="button" id="create-session-cancel" class="secondary">Cancel</button>
+          <button type="submit" id="create-session-submit" class="primary-action">Create</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="terminate-session-dialog" class="lifecycle-dialog" role="alertdialog" aria-labelledby="terminate-session-title" aria-describedby="terminate-session-warning terminate-session-status">
+      <form id="terminate-session-form">
+        <h2 id="terminate-session-title">Terminate session</h2>
+        <p>Terminate <strong id="terminate-session-name"></strong>?</p>
+        <p id="terminate-session-warning" class="dialog-warning">The tmux session will be destroyed and all SSH and web clients attached to it will be disconnected.</p>
+        <div id="terminate-session-status" class="dialog-status" role="status" aria-live="polite"></div>
+        <div class="dialog-actions">
+          <button type="button" id="terminate-session-cancel" class="secondary">Cancel</button>
+          <button type="submit" id="terminate-session-submit" class="danger-action">Terminate</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="paste-confirm-dialog" class="lifecycle-dialog paste-confirm-dialog" aria-labelledby="paste-confirm-title" aria-describedby="paste-confirm-summary paste-confirm-warning paste-confirm-status">
+      <form id="paste-confirm-form">
+        <h2 id="paste-confirm-title">Review paste</h2>
+        <p id="paste-confirm-summary" class="paste-confirm-summary"></p>
+        <p id="paste-confirm-warning" class="dialog-warning" hidden></p>
+        <div id="paste-confirm-status" class="dialog-status" role="status" aria-live="polite"></div>
+        <div class="dialog-actions">
+          <button type="button" id="paste-confirm-cancel" class="secondary">Cancel</button>
+          <button type="submit" id="paste-confirm-submit" class="primary-action">Paste to terminal</button>
+        </div>
+      </form>
+    </dialog>
+    <div id="lifecycle-notice" class="lifecycle-notice" role="status" aria-live="polite" hidden></div>
     <script src="/app.js"></script>
   </body>
 </html>

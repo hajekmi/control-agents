@@ -11,34 +11,45 @@ import (
 )
 
 const (
-	defaultBindAddr  = "0.0.0.0"
-	defaultPort      = 8080
-	defaultCookieTTL = 48 * 60 * 60
+	defaultBindAddr    = "0.0.0.0"
+	defaultPort        = 8080
+	defaultCookieTTL   = 48 * 60 * 60
+	defaultMaxSessions = 32
+	defaultSnapshotMax = 32 * 1024 * 1024
 )
 
 type Config struct {
-	BindAddr       string
-	Port           int
-	Password       string
-	StateDir       string
-	TLSCertFile    string
-	TLSKeyFile     string
-	AuthSecretFile string
-	CookieSecure   bool
-	CookieTTL      int
+	BindAddr         string
+	Port             int
+	Password         string
+	StateDir         string
+	HomeDir          string
+	TLSCertFile      string
+	TLSKeyFile       string
+	AuthSecretFile   string
+	CookieSecure     bool
+	CookieTTL        int
+	MaxSessions      int
+	SnapshotMaxBytes int64
 }
 
 func LoadFromEnv() (Config, error) {
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return Config{}, fmt.Errorf("determine service user home directory: %w", err)
+	}
 	defaultStateDir := filepath.Join(home, ".local", "state", "control-agents")
 
 	cfg := Config{
-		BindAddr:     getEnv("CONTROL_AGENTS_BIND_ADDR", defaultBindAddr),
-		Port:         defaultPort,
-		Password:     os.Getenv("CONTROL_AGENTS_PASSWORD"),
-		StateDir:     getEnv("CONTROL_AGENTS_STATE_DIR", defaultStateDir),
-		CookieSecure: getBoolEnv("CONTROL_AGENTS_COOKIE_SECURE", true),
-		CookieTTL:    defaultCookieTTL,
+		BindAddr:         getEnv("CONTROL_AGENTS_BIND_ADDR", defaultBindAddr),
+		Port:             defaultPort,
+		Password:         os.Getenv("CONTROL_AGENTS_PASSWORD"),
+		StateDir:         getEnv("CONTROL_AGENTS_STATE_DIR", defaultStateDir),
+		HomeDir:          home,
+		CookieSecure:     getBoolEnv("CONTROL_AGENTS_COOKIE_SECURE", true),
+		CookieTTL:        defaultCookieTTL,
+		MaxSessions:      defaultMaxSessions,
+		SnapshotMaxBytes: defaultSnapshotMax,
 	}
 	cfg.TLSCertFile = getEnv("CONTROL_AGENTS_TLS_CERT_FILE", filepath.Join(cfg.StateDir, "certs", "server.crt"))
 	cfg.TLSKeyFile = getEnv("CONTROL_AGENTS_TLS_KEY_FILE", filepath.Join(cfg.StateDir, "certs", "server.key"))
@@ -58,6 +69,22 @@ func LoadFromEnv() (Config, error) {
 			return Config{}, fmt.Errorf("CONTROL_AGENTS_COOKIE_TTL_SECONDS must be a number: %w", err)
 		}
 		cfg.CookieTTL = ttl
+	}
+
+	if value := os.Getenv("CONTROL_AGENTS_MAX_SESSIONS"); value != "" {
+		maximum, err := strconv.Atoi(value)
+		if err != nil || maximum <= 0 {
+			return Config{}, errors.New("CONTROL_AGENTS_MAX_SESSIONS must be a positive integer")
+		}
+		cfg.MaxSessions = maximum
+	}
+
+	if value := os.Getenv("CONTROL_AGENTS_SNAPSHOT_MAX_BYTES"); value != "" {
+		maximum, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || maximum <= 0 {
+			return Config{}, errors.New("CONTROL_AGENTS_SNAPSHOT_MAX_BYTES must be a positive integer")
+		}
+		cfg.SnapshotMaxBytes = maximum
 	}
 
 	if passwordFile := os.Getenv("CONTROL_AGENTS_PASSWORD_FILE"); passwordFile != "" {
@@ -87,6 +114,9 @@ func (c Config) Validate() error {
 	if c.StateDir == "" {
 		return errors.New("CONTROL_AGENTS_STATE_DIR cannot be empty")
 	}
+	if c.HomeDir == "" || !filepath.IsAbs(c.HomeDir) {
+		return errors.New("service user home directory must be absolute")
+	}
 	if c.TLSCertFile == "" {
 		return errors.New("CONTROL_AGENTS_TLS_CERT_FILE cannot be empty")
 	}
@@ -98,6 +128,12 @@ func (c Config) Validate() error {
 	}
 	if c.CookieTTL <= 0 {
 		return errors.New("CONTROL_AGENTS_COOKIE_TTL_SECONDS must be positive")
+	}
+	if c.MaxSessions <= 0 {
+		return errors.New("CONTROL_AGENTS_MAX_SESSIONS must be a positive integer")
+	}
+	if c.SnapshotMaxBytes <= 0 {
+		return errors.New("CONTROL_AGENTS_SNAPSHOT_MAX_BYTES must be a positive integer")
 	}
 	return nil
 }

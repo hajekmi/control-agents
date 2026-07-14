@@ -1,8 +1,19 @@
 # Control Agents
 
-Control Agents exposes wrapper-started tmux sessions through one password-protected web app. Each terminal session runs its own `ttyd` instance on a private Unix domain socket, while the Go service provides login, tab discovery, and reverse proxying.
+Control Agents manages durable tmux sessions from SSH and exposes those same
+sessions through one password-protected web app. One **managed session** is one
+Control Agents registry record plus one tmux session; it appears as one SSH
+selector item and one top-level web tab. Tmux windows and panes remain inside
+that managed session. A per-session `ttyd` process is only a recoverable web
+bridge on a private Unix socket, not the session's identity.
 
-It is optimized for mobile touch displays, especially iOS Safari and iPadOS browsers: the web UI includes touch history scrolling, a selectable Copy mode, Paste support, special-key buttons, and viewport handling for the software keyboard.
+The Go client and server share the same lifecycle implementation for registry
+persistence, per-session locking, tmux creation and termination, bridge
+recovery, and reconciliation. The SSH login, tmux server, `ttyd` processes,
+client, and `systemd --user` service must all run as the same Unix account and
+use the same state directory.
+
+It is optimized for mobile touch displays, especially iOS Safari and iPadOS browsers: the web UI includes immutable local History with native selection and Copy, Paste support, special-key buttons, and viewport handling for the software keyboard.
 
 ## Quick Install
 
@@ -13,7 +24,7 @@ sudo apt install tmux ttyd
 curl -fsSL https://raw.githubusercontent.com/hajekmi/control-agents/main/install.sh | sh
 systemctl --user enable control-agents.service
 systemctl --user restart control-agents.service
-control-agents main
+control-agents
 ```
 
 Then open:
@@ -62,15 +73,28 @@ rm -rf ~/.config/control-agents ~/.local/state/control-agents
 
 Runtime:
 
+- Linux `amd64` or `arm64`. Release installs select architecture-matched Go
+  client and server binaries and verify both against the published checksum
+  manifest.
 - `tmux` for shared terminal sessions.
 - `ttyd` for browser terminal I/O.
+- A Linux kernel with pidfd support (5.3 or newer); lifecycle process cleanup
+  fails closed rather than signaling through a reusable numeric PID.
 - systemd user services for the default service setup.
+- One Unix account for the SSH client, user service, tmux sessions, `ttyd`
+  bridges, and private lifecycle state.
+
+The release installer additionally requires `sha256sum` before it writes either
+downloaded binary.
 
 Development:
 
-- Go 1.25 or newer can build the module, but release/security builds should use the latest stable Go toolchain. As of 2026-05-16, the official stable release is Go 1.26.3.
+- Go 1.25 or newer; release and security builds should use the latest stable Go
+  toolchain compatible with the module.
 - `make` for the provided workflow.
 - Node.js 20, 22, or 24 plus npm for Playwright browser E2E tests.
+- Linux `unshare` and `ip` (normally provided by `util-linux` and `iproute2`)
+  for the private loopback-only Playwright network boundary.
 
 Playwright is a project-local dev dependency. Install JavaScript dependencies from the repo root:
 
@@ -78,6 +102,10 @@ Playwright is a project-local dev dependency. Install JavaScript dependencies fr
 npm install
 npx playwright install chromium
 ```
+
+Install `firefox` and `webkit` as well before running
+`make test-browser-matrix`; CI installs all three engines and their host
+dependencies with Playwright's `--with-deps` option.
 
 On AlmaLinux/RHEL-like hosts, Chromium also needs system libraries. If `make test-browser` reports missing browser dependencies, install the matching packages:
 
@@ -95,7 +123,7 @@ Use this path when developing locally or installing without release binaries. In
 - `ttyd`
 - systemd user services
 
-Clone the repository, build, and install the server, wrapper client, user systemd unit, and first-run environment file:
+Clone the repository, build, and install the server and client binaries, user systemd unit, and first-run environment file:
 
 ```sh
 git clone <repo-url> control-agents
@@ -110,13 +138,22 @@ systemctl --user enable control-agents.service
 systemctl --user restart control-agents.service
 ```
 
-Start a mirrored terminal session from any working directory:
+Open the managed-session selector:
+
+```sh
+control-agents
+```
+
+Choose `New session`, enter a canonical name, and the client creates it in the
+account's `$HOME`, starts its private `ttyd` bridge, writes its durable registry
+record, and attaches the current terminal. A direct named shortcut remains
+available:
 
 ```sh
 control-agents main
 ```
 
-This starts or reuses a tmux session, starts the private `ttyd` bridge, writes the session registry entry, and attaches the current terminal to the tmux session. For scripts that should only register the web session and exit, use:
+For scripts that should create or select the managed session and exit, use:
 
 ```sh
 control-agents --no-attach main
@@ -129,13 +166,22 @@ make test
 make build
 ```
 
-The default Makefile uses local Go cache directories under `.cache/` and disables cgo. This keeps tests working in restricted environments and produces a simple Linux binary.
+The default Makefile uses local Go cache directories under `.cache/` and disables cgo. This keeps tests working in restricted environments and produces simple Linux server and client binaries.
+
+Stage the same release assets used by CI, including both commands for Linux
+`amd64` and `arm64` plus their checksum manifest:
+
+```sh
+make release-assets VERSION=2026.5.1
+(cd dist && sha256sum -c sha256sums.txt)
+```
 
 Build metadata is injected from git by default. Override it explicitly when needed:
 
 ```sh
 make build VERSION=2026.5.1
 bin/control-agents-server --version
+bin/control-agents --version
 ```
 
 Run real tmux/ttyd E2E checks explicitly:
@@ -152,8 +198,81 @@ Run browser E2E checks with Playwright:
 make test-browser
 ```
 
-These tests start the Go server, create a real tmux/ttyd session through `bin/control-agents`, log in through Chromium, and verify the tabbed UI, terminal iframe, special keys panel, configurable resize-source panel, local visual viewport tracking, logout flow, right-side history controls, and wheel scrolling over the terminal iframe.
-They also cover the T-Control panel for listing tmux windows, creating/selecting a tmux window through the web UI, and showing the compact tmux-window count badge on session tabs when a session has more than one tmux window.
+This target runs the Chromium engine project. Run the complete automated engine
+matrix with:
+
+```sh
+make test-browser-matrix
+```
+
+The matrix runs Chromium, Firefox, and WebKit against the same real Go,
+tmux, and ttyd fixture while isolating browser state. The managed-lifecycle,
+secondary-viewer lifecycle, and mobile/two-viewer profiles each run in their
+own Playwright invocation with a fresh server, tmux, and browser fixture so
+preceding scenarios cannot carry transport state into them. Both browser
+targets preserve this split, including every engine in the matrix. The
+synthetic request-failure profile runs in one final isolated invocation so its
+browser-network transition cannot affect a later functional mutation. A
+bounded profile runner owns each complete process group, uses the already-built
+server binary, and verifies that the browser network process, server listener,
+ttyd children, tmux fixtures, and private state have stopped before starting
+the next invocation. On Linux, every complete profile runs in a fresh private
+loopback-only network namespace so unrelated host link, route, or dynamic IPv6
+notifications cannot abort an exactly-once local History or lifecycle mutation
+with Chromium's `ERR_NETWORK_CHANGED`. The deterministic boundary gate also
+proves one local mutation completes exactly once while a separate nested
+namespace emits link notifications. Within a shared functional invocation,
+each scenario also uses a test-scoped browser process instead of carrying one
+browser network service across independent contexts. WebKit
+is engine coverage; it is not evidence that desktop Safari, iOS Safari, or
+iPadOS Safari was tested. The suite includes
+deterministic current/oldest-supported iPhone viewport profiles plus iPad
+portrait, landscape, Split View, and Stage Manager-sized profiles. Physical
+Safari selection handles, native system menus, swipe inertia, and device
+performance remain operator release gates documented in
+`TASKS/backlog/0018-release-rollout.md`.
+
+The browser tests verify session lifecycle, terminal iframes, special keys,
+resize sources, visual viewport tracking, T-Control, local History state and
+focus, two-viewer isolation, background/foreground and reload behavior, and
+wheel/touch routing. The History fixture rolls a real managed pane through more
+than 50,000 shell-log lines, traverses immutable pages while another tmux client
+is attached, and traces that no copy-mode, viewport-scroll, input, or resize
+mutation is emitted by local scrolling.
+
+Browser failure diagnostics use a content-free reporter that emits only fixed
+test titles, projects, and status. Automatic page-text failure context, trace,
+screenshots, video, HTML reports, and network artifacts are disabled because
+they can capture terminal output, Paste bodies, auth cookies, or credentials.
+Each browser compatibility target finishes with an intentional-failure canary
+check that scans the diagnostics and a deliberately retained sanitized error
+context; run that check by itself with `make test-browser-artifacts`.
+
+Generate the synthetic dataset/server report and real-browser History report:
+
+```sh
+make test-benchmarks
+```
+
+The timing-tagged browser benchmark runs only through this target; the browser
+compatibility targets exclude it so transient timing/resource noise cannot
+contaminate engine correctness results.
+
+Reports are written under `.cache/benchmarks/`. They contain only fixed dataset
+IDs, axis labels, support statuses, numeric measurements, units, and reason
+codes. They never include terminal text, commands, managed-session names,
+opaque live references, cookies, or credentials. Server measurements cover
+ANSI parse duration, estimated snapshot RAM, and encoded response bytes;
+Chromium adds real-tmux capture duration, first paint, prepend, scrolling,
+scroll-interval long-task count and maximum, DOM/heap support, anchor drift,
+and current ttyd disconnect/reconnect correctness. The current ttyd harness marks
+input-to-paint, reconnect-to-redraw timing, and slow-consumer/backpressure
+measurement as unsupported because ttyd/xterm exposes neither deterministic
+paint/redraw completion signals nor a bounded application queue; task 0016 must
+replace those statuses when the native bridge adds the required signals.
+Hosted-runner wall-clock values are recorded baselines, not release thresholds;
+reference-device thresholds are evaluated only with the pending
+physical-device evidence matrix.
 
 ## Versioning
 
@@ -163,7 +282,7 @@ Releases use calendar versioning: `YYYY.M.REVISION`.
 - `M` is the release month without a leading zero.
 - `REVISION` starts at `1` each month and increments for each release in that month.
 
-Git release tags use a `v` prefix, for example `v2026.5.1`. Runtime output omits the prefix and includes commit/build metadata through `control-agents-server --version`, startup logs, and `GET /api/version`.
+Git release tags use a `v` prefix, for example `v2026.5.1`. Runtime output omits the prefix and includes commit/build metadata through both binaries' `--version` output, server startup logs, and `GET /api/version`.
 
 Breaking changes are called out in `CHANGELOG.md` with `BREAKING:` because compatibility is not encoded in the version number.
 
@@ -171,11 +290,18 @@ Release checklist:
 
 ```sh
 make test
+make test-e2e
+make test-browser
+node --check internal/server/static/app.js
+make release-assets VERSION=2026.5.1
+(cd dist && sha256sum -c sha256sums.txt)
 git tag -a v2026.5.1 -m "Release 2026.5.1"
 git push origin v2026.5.1
 ```
 
-Tag pushes run the release workflow, build Linux `amd64` and `arm64` assets, and upload checksums for `install.sh`.
+Tag pushes run the release workflow, build architecture-matched Go client and
+server assets for Linux `amd64` and `arm64`, verify their ELF architectures and
+checksums, and upload them with `sha256sums.txt` for `install.sh`.
 
 ## Run Locally
 
@@ -188,13 +314,19 @@ export CONTROL_AGENTS_PORT='8080'
 make run
 ```
 
-Register a mirrored terminal:
+Open the managed-session selector in an interactive terminal:
+
+```sh
+bin/control-agents
+```
+
+Or create or reuse one named session directly:
 
 ```sh
 bin/control-agents codex-main
 ```
 
-When no name is passed, `control-agents` uses the current directory name. For example, running it from `/home/bestie/codex/control-agents` registers the session as `control-agents`. Add `--no-attach` before the name when you only want to register the web session and print the session ID.
+The selector lists only live Control Agents managed sessions. Selecting or creating one attaches the current terminal; `Ctrl-b d` returns to the refreshed selector without terminating the session. Use `q` to return to the caller. Add `--no-attach` before an explicit name when you only want to register the web session, print its canonical ID, and exit.
 
 Open:
 
@@ -204,7 +336,37 @@ https://<vm-host-or-ip>:8080
 
 On first start the server generates a self-signed ECDSA P-256 certificate under the state directory. Browsers will show a certificate warning until you trust that certificate or provide your own TLS certificate.
 
-New sessions started with `bin/control-agents <name>` appear as tabs automatically. Only wrapper-started sessions are registered.
+New sessions started with `bin/control-agents <name>` appear as tabs automatically. Names must match `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`. Unregistered tmux sessions are never adopted automatically.
+
+## Managed Session Lifecycle
+
+Both the selector and web tab row show only sessions with a valid Control
+Agents registry record. They never import an arbitrary tmux session. A
+top-level selector item or browser tab is a whole managed tmux session; use
+tmux or T-Control for windows and panes inside it.
+
+New sessions created from SSH, direct named mode, register-only mode, or the
+web Menu always start in the service account's `$HOME`. Browser requests accept
+only the strict canonical name; they cannot provide a working directory,
+command, environment, shell, or tmux arguments.
+
+Detaching is nondestructive. `Ctrl-b d` detaches an SSH tmux client and returns
+to the selector, quitting the selector leaves every session running, and
+closing a browser or losing its connection only disconnects that browser. The
+web Menu's `Terminate session` action is different: after explicit named
+confirmation, it destroys the selected tmux session, disconnects every SSH and
+web client attached to it, stops the bridge, and removes its registry, socket,
+log, resize, and viewer state.
+
+The registry records desired managed-session state, while the stored `ttyd` PID
+and socket are replaceable runtime metadata. Server startup and session listing
+reconcile every valid record. If tmux is still live but its bridge or socket is
+gone, Control Agents starts a new bridge without recreating tmux. Restarting
+the web server therefore preserves tmux identity and terminal contents. If the
+tmux session is gone, reconciliation removes stale managed artifacts. Safe
+records written by the earlier Bash client are migrated in place; unsafe or
+invalid records are ignored and never cause an unmanaged tmux session to be
+adopted or terminated.
 
 ## Configuration
 
@@ -220,35 +382,156 @@ The Go service reads:
 - `CONTROL_AGENTS_AUTH_SECRET_FILE`, default `$CONTROL_AGENTS_STATE_DIR/auth/session.key`
 - `CONTROL_AGENTS_COOKIE_SECURE`, default `true` for HTTPS
 - `CONTROL_AGENTS_COOKIE_TTL_SECONDS`, default `172800`
+- `CONTROL_AGENTS_SNAPSHOT_MAX_BYTES`, default `33554432` (32 MiB); maximum
+  terminal capture used to create one local History snapshot
+- `CONTROL_AGENTS_MAX_SESSIONS`, default `32`; a positive integer limiting new
+  sessions created through the web API. Existing sessions above the limit
+  remain listable, attachable, and terminable.
 
-The wrapper reads:
+The shared managed-session lifecycle used by both the Go server and Go client
+reads:
 
-- `CONTROL_AGENTS_STATE_DIR`, same default as the service
-- `CONTROL_AGENTS_DISPLAY_NAME`, optional label for the browser tab
-- `CONTROL_AGENTS_APP_NAME`, optional override for tmux status-left; default is the session display name
-- `CONTROL_AGENTS_TMUX_WINDOW_SIZE`, default `smallest`
+- `CONTROL_AGENTS_APP_NAME`, optional override for tmux status-left; default is the canonical session name
+- `CONTROL_AGENTS_TMUX_WINDOW_SIZE`, default `manual`
 - `CONTROL_AGENTS_TMUX_MOUSE`, default `off`
 - `CONTROL_AGENTS_WEB_SCROLLBACK_LINES`, default `10000`
-- `CONTROL_AGENTS_ATTACH`, default `1`; set to `0` to only register the web session and print the session ID
-- `CONTROL_AGENTS_NO_ATTACH=1`, force register-and-exit mode; kept for tests and scripts
+
+The server and client must use the same `CONTROL_AGENTS_STATE_DIR`; its default
+is `$HOME/.local/state/control-agents` for both. The Go client additionally
+reads:
+
+- `CONTROL_AGENTS_ATTACH`, default `1`; set to `0` with an explicit name to register the web session, print its ID, and exit
+- `CONTROL_AGENTS_NO_ATTACH=1`, force register-and-exit mode with an explicit name; kept for tests and scripts
+
+Explicit `--attach` and `--no-attach` flags override these compatibility environment settings. Non-interactive mode always requires an explicit session name; no-argument invocation is the interactive selector.
 
 The shared state directory contains:
 
 - `sessions/*.json` registry files
 - `sockets/*.sock` private `ttyd` Unix sockets
 - `logs/*.log` per-session `ttyd` logs
+- `locks/*.lock` per-session lifecycle locks shared by the server and Go client
+- `agent/forwarded.sock` stable link to the most recently refreshed forwarded SSH agent socket
 - `auth/session.key` persistent cookie signing secret
 - `certs/server.crt` and `certs/server.key` when the default generated TLS files are used
 
-Keep `CONTROL_AGENTS_STATE_DIR` reasonably short. Unix domain socket paths have a small system limit, and the wrapper fails early when the generated socket path is too long.
+Registry files are durable desired-state records. Their canonical `id`,
+`name`, and tmux name identify one managed tmux session; `publicRef` is the
+opaque identity used by browser routes. The bridge PID and socket fields are
+internal runtime metadata that reconciliation may replace; losing them does
+not make a live tmux session unmanaged. Directories are kept at mode `0700`,
+and registry records, logs, resize records, the auth secret, and generated
+private key material are private files.
+
+Keep `CONTROL_AGENTS_STATE_DIR` reasonably short. Unix domain socket paths have a small system limit, and the lifecycle fails early when the generated socket path is too long.
 
 `CONTROL_AGENTS_WEB_SCROLLBACK_LINES` controls browser-side terminal history retained by `ttyd`/xterm.js while the web tab is connected. It does not replay tmux output that happened before the browser connected.
 
-Because the browser is attached to tmux, `control-agents` keeps `CONTROL_AGENTS_TMUX_MOUSE=off` by default so normal terminal text selection works without tmux intercepting mouse drag. The parent web app captures vertical wheel events and single-finger touch swipes over the terminal iframe and sends them to the tmux scroll API, so history scrolls without sending arrow-key events to the shell prompt. On touch devices, use `Menu` -> `Copy mode` to open a selectable text capture of the active terminal instead of swipe history scrolling, then `Menu` -> `Paste` to paste clipboard text back into the active pane. Start or refresh a session with `CONTROL_AGENTS_TMUX_MOUSE=on` only if you prefer tmux to own all mouse handling.
+Managed tmux windows and panes use `history-limit 50000`. Control Agents sets
+the exact managed session default before creating its durable user pane and
+reapplies that session option during reconciliation. It never changes the
+global tmux history default, so unmanaged sessions keep their own retention.
+Raising the option on an existing pane is not retroactive: history already
+discarded under its former limit cannot be recovered (including with the
+supported tmux 3.7b behavior). New panes and windows inherit the 50,000-line
+limit. History snapshots are independently bounded by
+`CONTROL_AGENTS_SNAPSHOT_MAX_BYTES`.
 
-The default `CONTROL_AGENTS_TMUX_WINDOW_SIZE=smallest` keeps browser and SSH clients on the same full tmux screen, which is important for fullscreen terminal apps such as Midnight Commander. The web Resize panel can override the active session's live resize source without changing this startup default. If you override the wrapper default to `largest`, `latest`, or `manual`, the right-side web scrollbar also accounts for tmux client window offset when a smaller browser or SSH client is panned inside a taller tmux window. The server accounts for tmux's status line when calculating the visible pane height so returning the scrollbar to the bottom lands back on the live prompt, not behind the status line.
+Because the browser is attached to tmux, `control-agents` keeps
+`CONTROL_AGENTS_TMUX_MOUSE=off` by default so normal terminal text selection
+works without tmux intercepting mouse drag. `Menu` -> `History` creates one
+bounded, immutable active-pane snapshot and opens it above the still-connected
+Live iframe. Wheel, touch, selection, and Copy are then entirely local browser
+operations: they never enter tmux copy-mode or issue a tmux scroll command.
+An upward wheel gesture, `PageUp`, or `Shift+PageUp` can open History directly;
+the first wheel delta and later trackpad inertia are applied only to the local
+History scroller. Each browser tab can change `Scroll gesture` to `Application`
+when a mouse-reporting terminal application should receive wheel and PageUp
+input instead. The preference is tab-local `sessionStorage` state and never
+changes tmux.
+Closing History returns immediately to the continuously updated Live terminal.
+`New output` indicates Live activity without changing the snapshot. Start or
+refresh a session with `CONTROL_AGENTS_TMUX_MOUSE=on` only if you prefer tmux to
+own mouse handling inside Live.
+
+History uses the browser's native scrolling, selection, long-press callout,
+and Copy behavior on Safari and iOS; there is no custom momentum or remote
+scroll controller. Its explicit Paste action reads the Clipboard API only from
+the click that requested it, shows UTF-8 byte and logical-line counts, and
+stages the value for review. Multiline text and C0, C1, or DEL control
+characters receive an explicit warning and require confirmation. If Clipboard
+API access is unavailable, the visible History textarea supports the system
+Paste callout and stages its `paste` event through the same review dialog. A
+denial, cancel, or failed request remains in History and is never retried
+automatically. Confirmed text reaches tmux through stdin and preserves its
+literal UTF-8 bytes and newlines, including bracketed-paste framing when the
+active application enables that terminal mode.
+
+The default `CONTROL_AGENTS_TMUX_WINDOW_SIZE=manual` keeps tmux dimensions
+fixed when another browser or a narrower SSH client attaches. The web Resize
+panel can keep the current dimensions with `Fixed` or apply one selected web
+viewer size once with `Fit once`; continuous `Follow this device` behavior is
+reserved for a later stage. Reconciliation migrates every existing managed
+window from legacy automatic sizing to `manual` without changing its current
+dimensions. A session-local tmux hook makes every later managed window manual
+synchronously when it is linked, including windows created directly from SSH;
+periodic reconciliation is not required to close a sizing race. History
+reflows locally by default, while Fixed grid preserves the captured pane width
+and permits horizontal panning. Neither History mode resizes the shared tmux
+window.
 
 `control-agents` also sets a compact tmux status line for managed sessions. The left side shows the session label, for example `[ahoj]` when started with `bin/control-agents ahoj`, and the right side shows the current pane directory through `#{pane_current_path}` without hostname, date, or time. Override the label with `CONTROL_AGENTS_APP_NAME`.
+
+### Forwarded SSH Agent Continuity
+
+Connect with agent forwarding and invoke the client to make the current
+forwarded agent available through the stable managed-session path:
+
+```sh
+ssh -A user@vm
+control-agents main
+```
+
+The client refreshes `$CONTROL_AGENTS_STATE_DIR/agent/forwarded.sock` only when
+standard SSH connection metadata is present and `SSH_AUTH_SOCK` is an existing
+Unix socket. It reports `available`, `unavailable`, or `invalid` on stderr and
+continues session selection when forwarding is absent. The symlink lives in a
+mode-`0700` directory and is replaced atomically. Control Agents does not copy,
+inspect, or persist agent traffic, identities, keys, or signatures.
+
+Managed sessions always use the stable path as `SSH_AUTH_SOCK`, including a
+web-created session for which no forwarding socket exists yet. The initial
+shell and later tmux windows and panes inherit that value. Availability then
+follows the SSH transport:
+
+- While the forwarding SSH connection is alive, managed shells can use its
+  agent. Detaching from tmux with `Ctrl-b d` does not break forwarding when the
+  SSH transport remains connected.
+- After SSH logout or transport loss, the forwarded socket disappears and
+  agent operations fail. Control Agents leaves the stable link and managed
+  sessions in place; it does not provide agent access while disconnected.
+- After reconnecting with `ssh -A`, invoke `control-agents` again. The client
+  retargets the stable link, so existing panes that already use the stable path
+  regain access without environment injection or terminal input.
+- One Unix account has one current forwarded identity shared by all managed
+  sessions. If several SSH clients forward different agents, the most recent
+  successful refresh wins for every managed session.
+
+Panes created before this feature may still contain an old direct forwarded
+socket path. Control Agents does not rewrite a running process environment.
+New panes inherit the stable path after lifecycle reconciliation; an old pane
+can opt in manually:
+
+```sh
+export SSH_AUTH_SOCK="${CONTROL_AGENTS_STATE_DIR:-$HOME/.local/state/control-agents}/agent/forwarded.sock"
+```
+
+Agent forwarding delegates signing to the connected Mac; it does not transfer
+the private key to the VM. Any process running as the same VM user can request
+signatures from that agent while forwarding is connected, and Control Agents
+does not isolate the service user's processes from one another. For detached
+background jobs that must authenticate while the Mac is offline, use a
+separately managed, narrowly scoped deploy key, workload identity, or token.
 
 ## API
 
@@ -263,24 +546,108 @@ Authenticated routes:
 - `GET /`: tabbed web UI.
 - `POST /logout`: clears the auth cookie and redirects to `/login`.
 - `GET /api/version`: returns server build metadata.
-- `GET /api/sessions`: returns active wrapper-registered sessions.
-- `GET /api/sessions/{session}/scroll`: returns tmux history scrollbar state for the active pane.
-- `POST /api/sessions/{session}/scroll`: scrolls tmux history. Body actions are `line-up`, `line-down`, `page-up`, `page-down`, `top`, `bottom`, or `set`.
-- `GET /api/sessions/{session}/capture`: returns a bounded text capture of the active tmux pane for Copy mode.
-- `POST /api/sessions/{session}/paste`: pastes text into the active tmux pane. Body: `{ "text": "..." }`; NUL bytes and payloads above 64 KiB are rejected.
-- `POST /api/sessions/{session}/keys`: sends a special key to the active tmux pane. Body key values include `ctrl-c`, `ctrl-d`, `ctrl-z`, `ctrl-l`, `escape`, `tab`, `enter`, arrows, `home`, `end`, `page-up`, and `page-down`.
-- `POST /api/sessions/{session}/resize/viewer`: records a browser tab/window resize heartbeat. Body: `{ "viewerId": "browser-tab-id", "width": 120, "height": 32, "transient": false }`. A transient heartbeat updates viewer liveness but does not auto-apply web-follow resize.
-- `GET /api/sessions/{session}/resize`: returns resize state: selected mode, selected browser viewer, active browser viewers, primary tmux client metadata, and the last applied size when available.
-- `POST /api/sessions/{session}/resize`: stores and applies the selected resize mode. Body: `{ "mode": "off|smallest|web|primary", "viewerId": "browser-tab-id" }`; `viewerId` is required only for explicit web-viewer mode.
-- `GET /api/sessions/{session}/tmux-control`: lists tmux windows for the session.
-- `POST /api/sessions/{session}/tmux-control`: runs an allowlisted tmux control action such as `new-window`, `select-window`, `next-window`, `previous-window`, `split-horizontal`, `split-vertical`, pane selection/resizing, `choose-window`, or `command-prompt`.
-- `GET /terminal/{session}/...`: reverse proxies HTTP and WebSocket traffic to the matching `ttyd` Unix socket.
+- `GET /api/csrf`: returns the concrete login's CSRF token for authenticated
+  browser HTTP mutations.
+- `GET /api/sessions`: reconciles and returns active managed sessions.
+- `POST /api/sessions`: creates or selects a managed session. Body:
+  `{ "name": "backend" }`. New sessions always start in the service user's
+  home directory.
+- `DELETE /api/sessions/{sessionRef}`: terminates the explicitly confirmed
+  managed session. Body:
+  `{ "confirmName": "backend", "paneRef": "p_F4jLm9aWx3cTzQ8vBnHsKA2b" }`.
+- `POST /api/v1/panes/{paneRef}/history-snapshots`: creates one immutable
+  History snapshot. Body: `{ "mode": "reflow|fixed" }`.
+- `GET /api/v1/history-snapshots/{snapshotId}/pages?before={cursor}`: returns a
+  bounded structured text/style page from the original capture.
+- `GET /api/v1/history-snapshots/{snapshotId}`: reports whether the live pane
+  has produced output since the immutable capture, for the History badge.
+- `DELETE /api/v1/history-snapshots/{snapshotId}`: explicitly releases the
+  in-memory snapshot.
+- `POST /api/sessions/{sessionRef}/paste/token`: issues a short-lived single-use
+  token bound to the concrete login, opaque pane generation, staged SHA-256
+  digest, byte/line counts, and control/trailing-newline warnings.
+- `POST /api/sessions/{sessionRef}/paste`: pastes text into the active tmux pane. Body: `{ "text": "...", "paneRef": "p_F4jLm9aWx3cTzQ8vBnHsKA2b", "token": "pt_..." }`; invalid UTF-8, NUL bytes, payloads above 64 KiB, token replay, and binding mismatches are rejected. The token is consumed before terminal mutation, text is loaded through stdin, and the temporary tmux buffer is always deleted.
+- `POST /api/sessions/{sessionRef}/keys`: sends a special key to the active tmux pane. The body includes `paneRef`; key values include `ctrl-c`, `ctrl-d`, `ctrl-z`, `ctrl-l`, `escape`, `tab`, `enter`, arrows, `home`, `end`, `page-up`, and `page-down`. A one-rune `text` value is used only to forward the first printable key after History returns to Live.
+- `POST /api/sessions/{sessionRef}/resize/viewer`: records a browser tab/window resize heartbeat. Body: `{ "viewerId": "viewer-550e8400-e29b-41d4-a716-446655440000", "paneRef": "p_F4jLm9aWx3cTzQ8vBnHsKA2b", "width": 120, "height": 32, "transient": false }`. A transient heartbeat updates viewer liveness but never applies a tmux resize.
+- `GET /api/sessions/{sessionRef}/resize`: returns fixed resize state, active browser viewers, current tmux window identity and dimensions, capabilities, and the last one-shot applied size when available.
+- `POST /api/sessions/{sessionRef}/resize`: stores or applies an explicit resize choice. Body: `{ "mode": "fixed|fit-once|follow-device", "paneRef": "p_F4jLm9aWx3cTzQ8vBnHsKA2b", "viewerId": "viewer-550e8400-e29b-41d4-a716-446655440000" }`; `viewerId` is required for `fit-once`, while `follow-device` is advertised but currently rejected as unsupported.
+- `GET /api/sessions/{sessionRef}/tmux-control`: lists opaque window references and display metadata for the session.
+- `POST /api/sessions/{sessionRef}/tmux-control`: runs an allowlisted tmux control action such as `new-window`, `select-window`, `next-window`, `previous-window`, `split-horizontal`, `split-vertical`, pane selection/resizing, `choose-window`, or `command-prompt`. Every action includes `paneRef`; `select-window` additionally uses an opaque `windowRef`.
+- `GET /terminal/{sessionRef}/...`: reverse proxies HTTP and WebSocket traffic to the matching `ttyd` Unix socket.
 
 The browser UI uses regular HTTPS requests for login, static assets, and JSON API calls. `/api/sessions` includes `tmuxWindowCount` only when a session has more than one internal tmux window; the tab row renders that value as a compact badge. `/api/*` endpoints return `401 unauthorized` when the auth cookie is missing or expired, so `app.js` can redirect the browser back to `/login` without receiving an HTML login page as an API response.
 
-Authenticated mutating routes require a same-origin `Origin` header, with `Referer` as a fallback for older clients. Terminal WebSocket upgrades under `/terminal/{session}/...` use the same origin check. This is intentionally strict because terminal actions are remote shell input.
+Every public session object contains opaque `id`, display-only `name`, `cwd`,
+`createdAt`, `activeWindowRef`, `activePaneRef`, `windowWidth`, and
+`windowHeight`, plus optional `tmuxWindowCount` only when it exceeds one. List
+and create responses never expose bridge PIDs, Unix socket paths, canonical
+tmux targets, pane IDs, or window indexes. Create responses have this shape:
 
-Go-served responses are gzip-compressed when the client sends `Accept-Encoding: gzip`. This includes `/login`, `/app.js`, `/styles.css`, and `/api/*` JSON responses. The `/terminal/{session}/...` ttyd proxy is excluded from this middleware, including both ttyd HTTP traffic and WebSocket upgrades.
+```json
+{
+  "created": true,
+  "session": {
+    "id": "G8qK1mR5tV9xB3nF7jL2pQ6wZ0cH4sYd",
+    "name": "backend",
+    "cwd": "/home/user",
+    "createdAt": "2026-07-13T12:00:00Z",
+    "activeWindowRef": "w_PvN7Hk2mQe8sRg4yUa6cDwXy",
+    "activePaneRef": "p_F4jLm9aWx3cTzQ8vBnHsKA2b",
+    "windowWidth": 120,
+    "windowHeight": 32
+  }
+}
+```
+
+Session creation accepts only canonical names matching
+`[A-Za-z0-9][A-Za-z0-9._-]{0,63}`. It returns `201 Created` with
+`"created": true` for a new session and `200 OK` with `"created": false` when
+the same healthy managed session already exists. An unmanaged tmux name or the
+configured web creation limit returns `409 Conflict`. Local lifecycle or bridge
+failures return `503 Service Unavailable` and are left for safe reconciliation.
+Termination requires `confirmName` to exactly match the session display name
+and the supplied `paneRef` to still identify its active pane generation. It returns
+`204 No Content` after tmux, bridge, registry, socket, and resize cleanup, and
+returns `404 Not Found` when the managed session does not exist.
+
+Authenticated mutating routes require a same-origin `Origin` header, with `Referer` as a fallback for older clients, plus `X-Control-Agents-CSRF-Token` from `/api/csrf`. Terminal WebSocket upgrades under `/terminal/{sessionRef}/...` require an exact same-origin `Origin`. This is intentionally strict because terminal actions are remote shell input.
+
+Authenticated JSON mutations accept exactly one bounded object with known,
+non-duplicate fields. Ordinary mutation bodies are limited to 4 KiB; Paste has
+a larger encoded envelope while its decoded UTF-8 text remains limited to 64
+KiB. Resize viewer heartbeats retain at most 512 bytes of User-Agent metadata,
+use bounded dimensions, and keep at most 32 viewers per managed session and
+256 across the server process. New viewer identities are rejected at capacity
+without evicting active entries.
+
+History requests also send the browser tab's opaque
+`X-Control-Agents-Viewer-ID`. An in-memory snapshot is bound to that viewer,
+the concrete signed login cookie, session ref, pane ref, and verified pane
+generation. Cross-login and cross-viewer reads return no content. Snapshots
+expire after ten idle minutes, are deleted on close/logout/session termination,
+and disappear with `410 Gone` after a server restart. Per-viewer, per-login,
+process-count, process-memory, and process node-estimate limits reject new
+snapshots instead of evicting an active snapshot. Capture work is additionally
+bounded per concrete login and across the server process; only a bounded number
+of requests with the exact same login/viewer/pane-generation/mode scope may
+wait for one coalesced capture.
+
+Go-served responses are gzip-compressed when the client sends `Accept-Encoding: gzip`. This includes `/login`, `/app.js`, `/styles.css`, and `/api/*` JSON responses. The `/terminal/{sessionRef}/...` ttyd proxy is excluded from this middleware, including both ttyd HTTP traffic and WebSocket upgrades.
+
+Session, window, pane, and viewer references are opaque authorization handles.
+Clients must reload the current topology after a server restart or a stale-ref
+response and must never construct a tmux target from display data. Before each
+mutation, the server resolves the handle to an exact internal tmux ID and
+verifies the pane generation from the tmux server start time, validated server
+PID, and pane ID.
+Changing a URL or JSON ref to one from another session, or reusing a ref after
+its pane disappears, returns an error instead of redirecting the operation.
+
+Terminal audit records are content-free. Their allowlist is the opaque session
+reference, HTTP status, byte count, duration, and reason code. History and
+Paste request/response bodies, terminal WebSocket frames, and terminal output
+are never written to application logs, traces, or metrics; production tmux is
+also run without verbose logging.
 
 Example `GET /api/sessions` response:
 
@@ -288,38 +655,33 @@ Example `GET /api/sessions` response:
 {
   "sessions": [
     {
-      "id": "main",
+      "id": "G8qK1mR5tV9xB3nF7jL2pQ6wZ0cH4sYd",
       "name": "main",
-      "tmuxName": "main",
-      "socket": "/home/user/.local/state/control-agents/sockets/main.sock",
-      "pid": 1234,
-      "cwd": "/home/user/project",
-      "createdAt": "2026-05-15T20:12:14Z"
+      "cwd": "/home/user",
+      "createdAt": "2026-05-15T20:12:14Z",
+      "activeWindowRef": "w_PvN7Hk2mQe8sRg4yUa6cDwXy",
+      "activePaneRef": "p_F4jLm9aWx3cTzQ8vBnHsKA2b",
+      "windowWidth": 120,
+      "windowHeight": 32
     }
   ]
 }
 ```
 
+The authenticated public session response intentionally excludes canonical
+tmux names, raw window/pane IDs, terminal bridge PIDs, Unix socket paths, and
+other process internals.
+
 Successful login sets the `control_agents_session` cookie. The cookie is signed with a persistent secret stored under the state directory, so sessions remain valid across server restarts until `CONTROL_AGENTS_COOKIE_TTL_SECONDS` expires or the auth secret file is removed.
 
 Failed logins are rate-limited in server memory per direct client IP: 10 failed attempts in 5 minutes returns `429 Too Many Requests` with `Retry-After`. A successful login clears that IP's failures, and restarting the daemon resets the limiter.
-
-Example scroll command:
-
-```json
-{
-  "action": "set",
-  "value": 120
-}
-```
-
-`value` is the scrollbar offset from the top of the combined tmux scroll range. The top of the range is tmux pane history, followed by any live-window overflow for small clients. The bottom position returns to live output.
 
 Example special key command:
 
 ```json
 {
-  "key": "ctrl-c"
+  "key": "ctrl-c",
+  "paneRef": "p_F4jLm9aWx3cTzQ8vBnHsKA2b"
 }
 ```
 
@@ -327,11 +689,11 @@ Example resize state:
 
 ```json
 {
-  "mode": "web",
-  "selectedViewerId": "viewer-7f3d",
+  "mode": "fixed",
+  "selectedViewerId": "viewer-550e8400-e29b-41d4-a716-446655440000",
   "viewers": [
     {
-      "id": "viewer-7f3d",
+      "id": "viewer-550e8400-e29b-41d4-a716-446655440000",
       "ip": "203.0.113.10",
       "userAgent": "Mozilla/5.0 ...",
       "width": 132,
@@ -340,15 +702,18 @@ Example resize state:
       "active": true
     }
   ],
-  "primaryClient": {
-    "name": "/dev/pts/2",
-    "width": 100,
-    "height": 28,
-    "activity": 1778944495,
-    "web": false
+  "window": {
+    "ref": "w_PvN7Hk2mQe8sRg4yUa6cDwXy",
+    "width": 132,
+    "height": 36
   },
+  "capabilities": [
+    { "mode": "fixed", "supported": true },
+    { "mode": "fit-once", "supported": true },
+    { "mode": "follow-device", "supported": false }
+  ],
   "applied": {
-    "mode": "web",
+    "mode": "fit-once",
     "width": 132,
     "height": 36
   }
@@ -357,29 +722,40 @@ Example resize state:
 
 Each browser tab stores its own `viewerId` in `sessionStorage` and sends periodic resize heartbeats with the current terminal size. The Resize panel identifies web viewers by browser/IP, terminal size, and last-seen time so users can choose the intended tab when multiple web windows are open.
 
-On mobile Safari/iOS, the page also tracks `visualViewport` changes from the software keyboard. This is local layout handling only: the web terminal iframe is refit above the keyboard and the tab heartbeat is refreshed as transient, so tmux resize mode is not changed unless the user explicitly applies a Resize panel mode.
+On mobile Safari/iOS, the page also tracks `visualViewport` changes from the
+software keyboard. This is local layout handling only: the web terminal iframe
+is refit above the keyboard and the tab heartbeat is refreshed as transient.
+Keyboard viewport resize/scroll events are kept separate from the debounced,
+stable layout/orientation resize path, so opening or closing the keyboard does
+not request a terminal grid resize or deliver SIGWINCH to the tmux application.
+Tmux resize mode is not changed unless the user explicitly applies a Resize
+panel mode.
 
 Resize modes:
 
-- `Off`: stores the setting and avoids applying a tmux resize.
-- `Automatic smallest`: applies tmux `window-size smallest`, letting tmux pick the smallest attached client.
-- `Follow web window`: applies manual tmux sizing from the selected browser viewer. This keeps the chosen browser tab authoritative until another mode is selected.
-- `Follow primary SSH/tmux`: applies manual tmux sizing from the primary non-web tmux client when one is available, so an SSH/tmux attachment can drive the shared size.
+- `Fixed`: keeps `window-size manual` and preserves the current tmux window dimensions.
+- `Fit once`: selects one active browser viewer, applies its reported dimensions once with manual sizing, then returns to fixed behavior. Later viewer heartbeats do not resize tmux.
+- `Follow this device`: visible as a future capability but disabled until continuous following is implemented.
 
-Explicit `web` and `primary` modes use tmux manual sizing. They must not set `window-size latest`. `smallest` is the only resize mode that should set `window-size smallest`, and `off` should not force a resize.
+These modes never set `window-size latest` or restore automatic
+smallest-client sizing. Local History and iOS visual viewport changes also
+never call `resize-window`.
 
 Example T-Control command:
 
 ```json
 {
   "action": "select-window",
-  "windowIndex": 1
+  "windowRef": "w_PvN7Hk2mQe8sRg4yUa6cDwXy",
+  "paneRef": "p_F4jLm9aWx3cTzQ8vBnHsKA2b"
 }
 ```
 
 T-Control intentionally uses an action allowlist instead of accepting arbitrary tmux commands from the browser. The web panel shows tmux windows, lets users switch windows, and exposes common window/pane controls.
 
-The main menu also includes `Resize`, which opens the resize-source panel. From there users can turn automatic resize management off, choose tmux's automatic smallest-client behavior, follow a selected web browser viewer, or follow the primary SSH/tmux client.
+The main menu also includes `Resize`, which opens the explicit sizing panel.
+Users can preserve the current fixed dimensions or fit once to a selected
+browser viewer; continuous device following is clearly marked as unavailable.
 
 ## systemd User Service Details
 
@@ -397,7 +773,12 @@ CONTROL_AGENTS_BIND_ADDR=0.0.0.0
 CONTROL_AGENTS_PORT=8080
 ```
 
-The same target installs the server as `~/.local/bin/control-agents-server` and the wrapper client as `~/.local/bin/control-agents`. Override paths with `SERVER_INSTALL=/path/to/control-agents-server` and `CLIENT_INSTALL=/path/to/control-agents` if needed.
+The same target installs the server as `~/.local/bin/control-agents-server` and the Go client as `~/.local/bin/control-agents`. Override paths with `SERVER_INSTALL=/path/to/control-agents-server` and `CLIENT_INSTALL=/path/to/control-agents` if needed.
+
+Run the service and invoke the client as the same Unix account. That account
+owns the tmux server, `ttyd` bridges, registry and lock files, and forwarded
+agent link. A root or system service, another SSH account, or a unit with a
+different state directory cannot transparently manage those sessions.
 
 Enable and start:
 
@@ -426,13 +807,28 @@ make uninstall
 
 `make uninstall` does not remove `~/.config/control-agents/env` or the state directory.
 
+## Container Deployment Limitations
+
+The provided `Containerfile` builds only `control-agents-server`; it is not the
+default deployment model and does not include the Go client, tmux, or `ttyd`.
+A standalone container cannot see or manage tmux sessions created by SSH on the
+host. Doing so would require an explicit deployment design that shares the
+same Unix identity, process/session namespaces, lifecycle state directory, tmux
+socket, terminal bridge runtime, and Unix sockets. The supported default is the
+same-account `systemd --user` service described above.
+
 ## Security
 
 See [`SECURITY.md`](SECURITY.md) for supported versions, vulnerability reporting, threat model notes, and deployment guidance.
 
 The service uses HTTPS by default with an automatically generated self-signed ECC certificate and accepts TLS 1.3 only. Older protocol versions, including TLS 1.2, are disabled. The password, cookies, terminal output, and terminal input are encrypted on the wire, but the browser cannot verify a self-signed certificate until you trust it locally or configure `CONTROL_AGENTS_TLS_CERT_FILE` and `CONTROL_AGENTS_TLS_KEY_FILE` with a certificate from a trusted authority.
 
-Go-served pages and API responses include security headers: CSP for the app shell, `X-Frame-Options: SAMEORIGIN`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`, and a restrictive `Permissions-Policy`. CSP is not applied to `/terminal/` proxy responses so embedded `ttyd` assets keep working.
+Go-served pages and API responses include security headers: a self-only CSP
+without inline scripts for the app shell, `X-Frame-Options: SAMEORIGIN`,
+`X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`, and a
+restrictive `Permissions-Policy`. The proxied ttyd page uses the minimal
+compatible `frame-ancestors 'self'` policy and loads the Control Agents
+transport observer from an external same-origin asset.
 
 For local-only access, bind to `127.0.0.1` and use SSH port forwarding:
 
@@ -447,12 +843,30 @@ Control Agents is licensed under the GNU Affero General Public License v3.0. See
 ## Troubleshooting
 
 - Service logs: use `journalctl --user -u control-agents.service -n 100 --no-pager` or follow live with `journalctl --user -u control-agents.service -f`.
-- No tabs appear: start sessions through `bin/control-agents <name>` and confirm service and wrapper use the same `CONTROL_AGENTS_STATE_DIR`.
-- No tabs appear but `<state-dir>/sockets/<session>.sock` exists: reinstall and restart the systemd unit so the service gets the managed `PATH` that includes `tmux` and `ttyd`.
+- No tabs appear: run `control-agents`, create or select a managed session, and
+  confirm the client and user service run as the same Unix account with the
+  same `CONTROL_AGENTS_STATE_DIR`. Arbitrary tmux sessions do not appear.
+- No tabs appear but `<state-dir>/sockets/<session>.sock` exists: reinstall and
+  restart the user unit so the same-account service gets the managed `PATH`
+  that includes `tmux` and `ttyd`.
 - Tab opens but terminal is unavailable: check `<state-dir>/logs/<session>.log` for `ttyd` errors.
-- Session disappears: the service removes stale registry files when the `ttyd` PID, tmux session, or Unix socket is gone.
-- Browser and SSH sizes differ: both clients attach to the same tmux session. The wrapper sets tmux `window-size` to `smallest` by default so fullscreen apps render the same complete screen in every client. Use Menu -> Resize to choose whether the session should stay off, use automatic smallest-client sizing, follow a browser viewer, or follow the primary SSH/tmux client. Explicit web and primary modes use tmux manual sizing, not `window-size latest`.
+- Tab opens but its bridge was killed: request the session list or restart the
+  user service. Reconciliation replaces the bridge and socket while preserving
+  the live tmux session and its contents.
+- Session disappears: the service removes a managed record only when its tmux
+  session is gone or the record is unsafe/invalid. A missing `ttyd` PID or Unix
+  socket alone is recovered without recreating tmux.
+- Lifecycle cleanup reports `pidfd_open` as unsupported: use Linux kernel 5.3 or newer. Stable process handles are required so a reused numeric PID can never redirect a stop signal to an unrelated process.
+- Browser and SSH sizes differ: both clients attach to the same tmux session,
+  whose dimensions remain fixed with `window-size manual` by default. Use Menu
+  -> Resize -> Fit once to apply one browser viewer's dimensions, or Fixed to
+  preserve the current size. Attaching a narrower client does not
+  automatically shrink the shared tmux window.
 - Browser history is too short while the web tab is connected: increase `CONTROL_AGENTS_WEB_SCROLLBACK_LINES` before starting `bin/control-agents <name>`, then reconnect the web tab.
-- Mouse wheel cycles shell command history: reinstall and restart the service so the current web UI captures terminal wheel events. Use the right-side web scrollbar on browsers where iframe wheel handling is unreliable.
-- Use the right-side web scrollbar to scroll tmux pane history and small-client live-window overflow directly.
+- Older tmux output is missing after increasing the history limit: discarded
+  pane history is not recoverable retroactively. New output and newly created
+  panes use the reconciled 50,000-line limit.
+- Mouse wheel cycles shell command history: reinstall and restart the service,
+  then use Menu -> History. History scroll is local and does not send wheel
+  events or tmux copy-mode commands to the shell.
 - On narrow mobile screens, the terminal area has horizontal scrolling so the tmux pane can keep a usable width without rotating the device.

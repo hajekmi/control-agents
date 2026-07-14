@@ -1,5 +1,6 @@
 .cache/
 bin/control-agents-server
+bin/control-agents
 bin/server
 node_modules/
 playwright-report/

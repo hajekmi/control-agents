@@ -18,6 +18,7 @@ import (
 
 const CookieName = "control_agents_session"
 const SecretSize = 32
+const csrfDomain = "control-agents-csrf-v1\x00"
 
 type Authenticator struct {
 	passwordHash []byte
@@ -74,16 +75,26 @@ func NewWithSecret(password string, ttl time.Duration, secureCookie bool, secret
 }
 
 func LoadOrCreateSecret(path string) ([]byte, error) {
-	data, err := os.ReadFile(path)
+	return loadOrCreateSecret(path, os.OpenFile)
+}
+
+type secretFileOpener func(string, int, os.FileMode) (*os.File, error)
+
+func loadOrCreateSecret(path string, openFile secretFileOpener) ([]byte, error) {
+	directory := filepath.Dir(path)
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return nil, fmt.Errorf("create auth secret dir: %w", err)
+	}
+	if err := os.Chmod(directory, 0o700); err != nil {
+		return nil, fmt.Errorf("set auth secret dir permissions: %w", err)
+	}
+
+	data, err := readSecretFile(path)
 	if err == nil {
 		return parseSecret(data)
 	}
 	if !errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("read auth secret: %w", err)
-	}
-
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return nil, fmt.Errorf("create auth secret dir: %w", err)
+		return nil, err
 	}
 
 	secret, err := randomSecret()
@@ -91,11 +102,11 @@ func LoadOrCreateSecret(path string) ([]byte, error) {
 		return nil, err
 	}
 	encoded := base64.RawURLEncoding.EncodeToString(secret) + "\n"
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	file, err := openFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if errors.Is(err, os.ErrExist) {
-		data, err := os.ReadFile(path)
+		data, err := readSecretFile(path)
 		if err != nil {
-			return nil, fmt.Errorf("read auth secret: %w", err)
+			return nil, err
 		}
 		return parseSecret(data)
 	}
@@ -103,11 +114,35 @@ func LoadOrCreateSecret(path string) ([]byte, error) {
 		return nil, fmt.Errorf("create auth secret: %w", err)
 	}
 	defer file.Close()
+	if err := file.Chmod(0o600); err != nil {
+		return nil, fmt.Errorf("set auth secret permissions: %w", err)
+	}
 
 	if _, err := file.WriteString(encoded); err != nil {
 		return nil, fmt.Errorf("write auth secret: %w", err)
 	}
 	return secret, nil
+}
+
+func readSecretFile(path string) ([]byte, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("stat auth secret: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, errors.New("auth secret must be a regular file")
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		return nil, fmt.Errorf("set auth secret permissions: %w", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read auth secret: %w", err)
+	}
+	return data, nil
 }
 
 func randomSecret() ([]byte, error) {
@@ -139,15 +174,17 @@ func (a *Authenticator) Login(w http.ResponseWriter, password string) bool {
 		return false
 	}
 
-	value := a.sign(a.now().Unix())
+	now := a.now()
+	value := a.sign(now.Unix())
 	http.SetCookie(w, &http.Cookie{
 		Name:     CookieName,
 		Value:    value,
 		Path:     "/",
 		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
+		SameSite: http.SameSiteStrictMode,
 		Secure:   a.secureCookie,
 		MaxAge:   int(a.ttl.Seconds()),
+		Expires:  now.Add(a.ttl),
 	})
 	return true
 }
@@ -158,9 +195,10 @@ func (a *Authenticator) Logout(w http.ResponseWriter) {
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
+		SameSite: http.SameSiteStrictMode,
 		Secure:   a.secureCookie,
 		MaxAge:   -1,
+		Expires:  time.Unix(1, 0).UTC(),
 	})
 }
 
@@ -170,6 +208,46 @@ func (a *Authenticator) Authenticated(r *http.Request) bool {
 		return false
 	}
 	return a.verify(cookie.Value)
+}
+
+// LoginScope returns an opaque representation of the concrete authenticated
+// login. Each successful login receives a fresh cookie nonce, so two browsers
+// using the same configured password still have distinct scopes. The raw
+// cookie is never retained outside the authenticator.
+func (a *Authenticator) LoginScope(r *http.Request) (string, bool) {
+	cookie, err := r.Cookie(CookieName)
+	if err != nil || !a.verify(cookie.Value) {
+		return "", false
+	}
+	digest := sha256.Sum256([]byte(cookie.Value))
+	return base64.RawURLEncoding.EncodeToString(digest[:]), true
+}
+
+// CSRFToken returns a session-bound token without exposing the authentication
+// cookie or persistent signing secret to JavaScript.
+func (a *Authenticator) CSRFToken(r *http.Request) (string, bool) {
+	cookie, err := r.Cookie(CookieName)
+	if err != nil || !a.verify(cookie.Value) {
+		return "", false
+	}
+	mac := hmac.New(sha256.New, a.secret)
+	_, _ = mac.Write([]byte(csrfDomain))
+	_, _ = mac.Write([]byte(cookie.Value))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), true
+}
+
+// VerifyCSRF validates a token against the concrete authenticated login.
+func (a *Authenticator) VerifyCSRF(r *http.Request, token string) bool {
+	expected, ok := a.CSRFToken(r)
+	if !ok {
+		return false
+	}
+	provided, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(token))
+	if err != nil {
+		return false
+	}
+	expectedBytes, err := base64.RawURLEncoding.DecodeString(expected)
+	return err == nil && hmac.Equal(provided, expectedBytes)
 }
 
 func (a *Authenticator) Require(next http.Handler) http.Handler {

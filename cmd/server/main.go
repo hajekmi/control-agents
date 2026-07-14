@@ -34,7 +34,7 @@ func main() {
 
 	app, err := server.New(cfg, logger)
 	if err != nil {
-		logger.Error("failed to create server", "error", err)
+		logServerCreationFailure(logger, err)
 		os.Exit(1)
 	}
 	if err := cert.EnsureSelfSignedECC(cfg.TLSCertFile, cfg.TLSKeyFile, cfg.BindAddr); err != nil {
@@ -73,6 +73,10 @@ func main() {
 			os.Exit(1)
 		}
 	}
+}
+
+func logServerCreationFailure(logger *slog.Logger, err error) {
+	logger.Error("failed to create server", "reason_code", server.StartupFailureReason(err))
 }
 
 func tls13OnlyConfig() *tls.Config {

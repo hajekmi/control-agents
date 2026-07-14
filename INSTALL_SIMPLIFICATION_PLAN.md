@@ -11,7 +11,7 @@ sudo apt install tmux ttyd
 curl -fsSL https://raw.githubusercontent.com/hajekmi/control-agents/main/install.sh | sh
 systemctl --user enable control-agents.service
 systemctl --user restart control-agents.service
-control-agents main
+control-agents
 ```
 
 Then open:
@@ -66,7 +66,7 @@ Public install defaults should avoid `/usr/local/bin`.
 Preferred paths:
 
 - Server: `~/.local/bin/control-agents-server`
-- Wrapper: `~/.local/bin/control-agents`
+- Go client: `~/.local/bin/control-agents`
 - Config: `~/.config/control-agents/env`
 - Service: `~/.config/systemd/user/control-agents.service`
 
@@ -100,7 +100,11 @@ This reduces shell-script complexity over time.
 
 Do not make containers the primary quickstart path.
 
-The server can run in a container, but `control-agents`, `tmux`, and `ttyd` still need host access to sessions and Unix sockets. Keep container notes as an advanced deployment option.
+The provided container is server-only and cannot manage SSH/tmux sessions on
+the host by itself. A future advanced deployment would have to share the same
+Unix identity, process/session namespaces, lifecycle state, tmux socket, and
+`ttyd` Unix sockets explicitly. Keep the same-account `systemd --user` model as
+the supported default.
 
 ### 6. Add GitHub Actions Release Workflow
 
@@ -127,7 +131,7 @@ sudo apt install tmux ttyd
 curl -fsSL https://raw.githubusercontent.com/hajekmi/control-agents/main/install.sh | sh
 systemctl --user enable control-agents.service
 systemctl --user restart control-agents.service
-control-agents main
+control-agents
 ```
 
 Keep source build instructions as an advanced path.
@@ -139,6 +143,6 @@ Keep source build instructions as an advanced path.
 ## Resolved Decisions
 
 - `install.sh` installs the latest release by default and supports `VERSION=...`.
-- Public install paths are user-local; the wrapper is not installed to `/usr/local/bin` automatically.
+- Public install paths are user-local; the Go client is not installed to `/usr/local/bin` automatically.
 - The generated password is written to `~/.config/control-agents/env`, not printed.
 - Legacy `terminal-mirror` paths and `MIRROR_*` variables are not supported as fallbacks.

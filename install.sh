@@ -53,18 +53,6 @@ download() {
   fi
 }
 
-download_optional() {
-  url="$1"
-  output="$2"
-  if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$url" -o "$output"
-  elif command -v wget >/dev/null 2>&1; then
-    wget -qO "$output" "$url"
-  else
-    die "curl or wget is required"
-  fi
-}
-
 generate_password() {
   if command -v openssl >/dev/null 2>&1; then
     openssl rand -hex 24
@@ -114,6 +102,7 @@ After=network.target
 
 [Service]
 Type=simple
+UMask=0077
 Environment=CONTROL_AGENTS_BIND_ADDR=0.0.0.0
 Environment=CONTROL_AGENTS_PORT=8080
 Environment=CONTROL_AGENTS_STATE_DIR=$HOME/.local/state/control-agents
@@ -124,6 +113,11 @@ StandardOutput=journal
 StandardError=journal
 Restart=on-failure
 RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=false
+ProtectSystem=full
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LimitCORE=0
 
 [Install]
 WantedBy=default.target
@@ -159,18 +153,16 @@ install_binaries() {
 
     download "$base_url/$server_asset" "$server_file"
     download "$base_url/$client_asset" "$client_file"
-    if download_optional "$base_url/sha256sums.txt" "$tmp_dir/sha256sums.txt"; then
-      if command -v sha256sum >/dev/null 2>&1; then
-        (
-          cd "$tmp_dir"
-          sha256sum -c sha256sums.txt --ignore-missing
-        )
-      else
-        warn "sha256sum is unavailable; skipping checksum verification"
-      fi
-    else
-      warn "sha256sums.txt is unavailable; skipping checksum verification"
-    fi
+    need_cmd sha256sum
+    download "$base_url/sha256sums.txt" "$tmp_dir/sha256sums.txt"
+    server_sum="$(sed -n "s/^\\([0-9a-fA-F]\\{64\\}\\)  $server_asset$/\\1/p" "$tmp_dir/sha256sums.txt")"
+    client_sum="$(sed -n "s/^\\([0-9a-fA-F]\\{64\\}\\)  $client_asset$/\\1/p" "$tmp_dir/sha256sums.txt")"
+    [ -n "$server_sum" ] || die "checksum manifest does not contain $server_asset"
+    [ -n "$client_sum" ] || die "checksum manifest does not contain $client_asset"
+    (
+      cd "$tmp_dir"
+      printf '%s  %s\n%s  %s\n' "$server_sum" "$server_asset" "$client_sum" "$client_asset" | sha256sum -c -
+    )
   fi
 
   mkdir -p "$BIN_DIR"
@@ -222,9 +214,9 @@ printf '\nInstalled Control Agents.\n'
 printf 'Binaries: %s/control-agents-server, %s/control-agents\n' "$BIN_DIR" "$BIN_DIR"
 printf 'Config:   %s\n' "$ENV_FILE"
 printf 'Service:  %s\n\n' "$SERVICE_FILE"
-printf 'Next commands:\n'
+printf 'Run the service and client as this same Unix user. Next commands:\n'
 printf '  systemctl --user enable control-agents.service\n'
 printf '  systemctl --user restart control-agents.service\n'
-printf '  control-agents main\n\n'
+printf '  control-agents\n\n'
 printf 'Then open:\n'
 printf '  https://<host>:%s\n' "$port"

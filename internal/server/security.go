@@ -7,7 +7,8 @@ import (
 	"strings"
 )
 
-const appContentSecurityPolicy = "default-src 'self'; base-uri 'none'; object-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' ws: wss:; frame-src 'self'; frame-ancestors 'self'; form-action 'self'"
+const appContentSecurityPolicy = "default-src 'self'; base-uri 'none'; object-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; frame-src 'self'; frame-ancestors 'self'; form-action 'self'"
+const csrfHeader = "X-Control-Agents-CSRF-Token"
 
 func applySecurityHeaders(w http.ResponseWriter, r *http.Request) {
 	header := w.Header()
@@ -31,14 +32,30 @@ func requiresSameOrigin(r *http.Request) bool {
 	return isUnsafeMethod(r.Method)
 }
 
+func requiresCSRF(r *http.Request) bool {
+	return r.URL.Path != "/login" && isUnsafeMethod(r.Method)
+}
+
 func sameOrigin(r *http.Request) bool {
-	origin := strings.TrimSpace(r.Header.Get("Origin"))
-	if origin != "" {
+	origins := r.Header.Values("Origin")
+	if len(origins) > 0 {
+		if len(origins) != 1 {
+			return false
+		}
+		origin := origins[0]
+		if origin != strings.TrimSpace(origin) || strings.Contains(origin, "#") {
+			return false
+		}
 		originURL, err := url.Parse(origin)
-		if err != nil || originURL.Scheme == "" || originURL.Host == "" || originURL.User != nil {
+		if err != nil || !isSerializedOrigin(originURL) {
 			return false
 		}
 		return matchesRequestOrigin(r, originURL.Scheme, originURL.Host)
+	}
+	// A browser WebSocket handshake supplies Origin. Do not accept Referer as a
+	// fallback for terminal upgrades because Origin is the authorization input.
+	if strings.HasPrefix(r.URL.Path, "/terminal/") && isWebSocketUpgrade(r) {
+		return false
 	}
 
 	referer := strings.TrimSpace(r.Header.Get("Referer"))
@@ -51,6 +68,12 @@ func sameOrigin(r *http.Request) bool {
 		return false
 	}
 	return matchesRequestOrigin(r, refererURL.Scheme, refererURL.Host)
+}
+
+func isSerializedOrigin(origin *url.URL) bool {
+	return origin.Scheme != "" && origin.Host != "" && origin.User == nil && origin.Opaque == "" &&
+		origin.Path == "" && origin.RawPath == "" && origin.RawQuery == "" && !origin.ForceQuery &&
+		origin.Fragment == "" && origin.RawFragment == ""
 }
 
 func matchesRequestOrigin(r *http.Request, scheme, host string) bool {

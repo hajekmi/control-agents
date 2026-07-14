@@ -25,8 +25,17 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Install tmux, ttyd, and browser engines
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y iproute2 tmux ttyd util-linux
+          npx playwright install --with-deps chromium firefox webkit
       - run: make test
       - run: node --check internal/server/static/app.js
+      - run: node --check test/playwright/app.spec.js
+      - run: make test-e2e
+      - run: make test-browser-matrix
+      - run: make test-benchmarks
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -44,22 +53,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p dist
           version="${GITHUB_REF_NAME#v}"
           commit="${GITHUB_SHA::7}"
           build_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          ldvars="-X control-agents/internal/version.Version=${version} -X control-agents/internal/version.Commit=${commit} -X control-agents/internal/version.BuildDate=${build_date}"
+          make release-assets VERSION="${version}" COMMIT="${commit}" BUILD_DATE="${build_date}"
 
-          for arch in amd64 arm64; do
-            GOOS=linux GOARCH="${arch}" CGO_ENABLED=0 go build -buildvcs=false -ldflags "${ldvars}" -o "dist/control-agents-server-linux-${arch}" ./cmd/server
-            cp bin/control-agents "dist/control-agents-linux-${arch}"
-            chmod 0755 "dist/control-agents-linux-${arch}"
+          for asset in dist/control-agents-server-linux-amd64 dist/control-agents-linux-amd64; do
+            file "${asset}" | grep -q 'x86-64'
           done
-
-          (
-            cd dist
-            sha256sum * > sha256sums.txt
-          )
+          for asset in dist/control-agents-server-linux-arm64 dist/control-agents-linux-arm64; do
+            file "${asset}" | grep -q 'ARM aarch64'
+          done
+          (cd dist && sha256sum -c sha256sums.txt)
       - name: Upload release assets
         env:
           GH_TOKEN: ${{ github.token }}

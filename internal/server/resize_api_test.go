@@ -15,125 +15,158 @@ import (
 	"control-agents/internal/tmux"
 )
 
-func TestApplyResizeRequestRejectsMissingWebViewer(t *testing.T) {
+func TestApplyResizeRequestRejectsMissingFitViewer(t *testing.T) {
 	store := newResizeStore(filepath.Join(t.TempDir(), "resize"), 60*time.Second)
-	server := &Server{
-		resize: store,
-		tmux:   tmux.NewClientWithRunner(&resizeAPIRunner{}),
-	}
-	request := httptest.NewRequest(http.MethodPost, "/api/sessions/alpha/resize", nil)
-	session := registry.Session{ID: "alpha", TmuxName: "main", PID: 300}
+	server := &Server{resize: store, tmux: tmux.NewClientWithRunner(&resizeAPIRunner{})}
+	request := httptest.NewRequest(http.MethodPost, "/api/sessions/"+testSessionRef+"/resize", nil)
+	pane := paneBinding{rawID: "%42", windowID: "@7"}
 
-	_, err := server.applyResizeRequest(request, "alpha", session, resizeRequest{Mode: resizeModeWeb, ViewerID: "missing"})
+	_, err := server.applyResizeRequest(request, testSessionRef, registry.Session{}, pane, resizeRequest{Mode: resizeModeFitOnce, ViewerID: "missing_viewer_123"})
 	if !errors.Is(err, errInvalidResizeRequest) {
 		t.Fatalf("err = %v, want errInvalidResizeRequest", err)
 	}
-	settings, err := store.Load("alpha")
+	settings, err := store.Load(testSessionRef)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if settings.Mode != resizeModeOff {
-		t.Fatalf("settings = %#v, want default off", settings)
+	if settings.Mode != resizeModeFixed {
+		t.Fatalf("settings = %#v, want default fixed", settings)
 	}
 }
 
-func TestApplyResizeRequestPrimaryUsesManualPrimaryClientSize(t *testing.T) {
-	runner := &resizeAPIRunner{
-		resizeClients: "/dev/pts/web|300|80|24|100|off|80|24\n/dev/pts/ssh|501|200|60|300|on|200|59\n",
-	}
-	server := &Server{
-		resize: newResizeStore(filepath.Join(t.TempDir(), "resize"), 60*time.Second),
-		tmux:   tmux.NewClientWithRunner(runner),
-	}
-	request := httptest.NewRequest(http.MethodPost, "/api/sessions/alpha/resize", nil)
-	session := registry.Session{ID: "alpha", TmuxName: "main", PID: 300}
+func TestApplyResizeFixedUsesManualModeWithoutResizeWindow(t *testing.T) {
+	runner := &resizeAPIRunner{}
+	server := &Server{resize: newResizeStore(filepath.Join(t.TempDir(), "resize"), time.Minute), tmux: tmux.NewClientWithRunner(runner)}
+	request := httptest.NewRequest(http.MethodPost, "/api/sessions/"+testSessionRef+"/resize", nil)
 
-	applied, err := server.applyResizeRequest(request, "alpha", session, resizeRequest{Mode: resizeModePrimary})
+	applied, err := server.applyResizeRequest(request, testSessionRef, registry.Session{}, paneBinding{windowID: "@7"}, resizeRequest{Mode: resizeModeFixed})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if applied == nil || applied.Mode != resizeModePrimary || applied.ClientName != "/dev/pts/ssh" || applied.Width != 200 || applied.Height != 59 {
-		t.Fatalf("applied = %#v, want primary ssh 200x59", applied)
+	if applied == nil || applied.Mode != resizeModeFixed {
+		t.Fatalf("applied = %#v, want fixed", applied)
 	}
-	wantCalls := [][]string{
-		{"output", "tmux", "list-clients", "-t", "main", "-F", "#{client_name}|#{client_pid}|#{client_width}|#{client_height}|#{client_activity}|#{status}|#{window_width}|#{window_height}"},
-		{"run", "tmux", "set-option", "-w", "-t", "main:", "window-size", "manual"},
-		{"run", "tmux", "resize-window", "-t", "main:", "-x", "200", "-y", "59"},
-	}
-	if !reflect.DeepEqual(runner.calls, wantCalls) {
-		t.Fatalf("calls = %#v, want %#v", runner.calls, wantCalls)
+	want := [][]string{{"run", "tmux", "set-option", "-w", "-t", "@7", "window-size", "manual"}}
+	if !reflect.DeepEqual(runner.calls, want) {
+		t.Fatalf("calls = %#v, want no resize-window", runner.calls)
 	}
 }
 
-func TestResizeResponseMarksRecentViewersActive(t *testing.T) {
-	store := newResizeStore(filepath.Join(t.TempDir(), "resize"), 60*time.Second)
-	_, err := store.RecordViewer("alpha", resizeViewer{ID: "viewer-1", Width: 120, Height: 40})
-	if err != nil {
-		t.Fatal(err)
-	}
-	server := &Server{
-		resize: store,
-		tmux:   tmux.NewClientWithRunner(&resizeAPIRunner{}),
-	}
-	request := httptest.NewRequest(http.MethodGet, "/api/sessions/alpha/resize", nil)
-	session := registry.Session{ID: "alpha", TmuxName: "main", PID: 300}
-
-	response, err := server.resizeResponse(request, "alpha", session, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(response.Viewers) != 1 || !response.Viewers[0].Active {
-		t.Fatalf("viewers = %#v, want recent viewer active", response.Viewers)
-	}
-}
-
-func TestTransientResizeViewerHeartbeatDoesNotAutoApplyWebMode(t *testing.T) {
-	store := newResizeStore(filepath.Join(t.TempDir(), "resize"), 60*time.Second)
-	if err := store.Save("alpha", resizeSettings{Mode: resizeModeWeb, SelectedViewerID: "viewer-1"}); err != nil {
+func TestApplyResizeFitOnceResizesOnceThenPersistsFixed(t *testing.T) {
+	store := newResizeStore(filepath.Join(t.TempDir(), "resize"), time.Minute)
+	if _, err := store.RecordViewer(testSessionRef, resizeViewer{ID: testViewerID, Width: 140, Height: 47}); err != nil {
 		t.Fatal(err)
 	}
 	runner := &resizeAPIRunner{}
-	server := &Server{
-		resize: store,
-		tmux:   tmux.NewClientWithRunner(runner),
-	}
-	request := httptest.NewRequest(
-		http.MethodPost,
-		"/api/sessions/alpha/resize/viewer",
-		strings.NewReader(`{"viewerId":"viewer-1","width":80,"height":18,"transient":true}`),
-	)
-	recorder := httptest.NewRecorder()
-	session := registry.Session{ID: "alpha", TmuxName: "main", PID: 300}
+	server := &Server{resize: store, tmux: tmux.NewClientWithRunner(runner)}
+	request := httptest.NewRequest(http.MethodPost, "/api/sessions/"+testSessionRef+"/resize", nil)
 
-	server.handleResizeViewerAPI(recorder, request, "alpha", session)
+	applied, err := server.applyResizeRequest(request, testSessionRef, registry.Session{}, paneBinding{windowID: "@7"}, resizeRequest{Mode: resizeModeFitOnce, ViewerID: testViewerID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied == nil || applied.Mode != resizeModeFitOnce || applied.Width != 140 || applied.Height != 47 {
+		t.Fatalf("applied = %#v, want one 140x47 fit", applied)
+	}
+	want := [][]string{
+		{"run", "tmux", "set-option", "-w", "-t", "@7", "window-size", "manual"},
+		{"run", "tmux", "resize-window", "-t", "@7", "-x", "140", "-y", "47"},
+	}
+	if !reflect.DeepEqual(runner.calls, want) {
+		t.Fatalf("calls = %#v, want %#v", runner.calls, want)
+	}
+	settings, err := store.Load(testSessionRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.Mode != resizeModeFixed || settings.SelectedViewerID != testViewerID {
+		t.Fatalf("settings = %#v, want fixed after one fit", settings)
+	}
+}
+
+func TestTransientResizeViewerHeartbeatNeverResizesTmux(t *testing.T) {
+	runner := &resizeAPIRunner{}
+	server := &Server{
+		identity: newIdentityStore(),
+		resize:   newResizeStore(filepath.Join(t.TempDir(), "resize"), time.Minute),
+		tmux:     tmux.NewClientWithRunner(runner),
+	}
+	managed := registry.Session{ID: "alpha", PublicRef: testSessionRef, TmuxName: "alpha", PID: 300}
+	topology, err := server.identity.refresh(context.Background(), server.tmux, managed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.calls = nil
+	body := `{"viewerId":"` + testViewerID + `","paneRef":"` + string(topology.ActivePaneRef) + `","width":80,"height":18,"transient":true}`
+	request := httptest.NewRequest(http.MethodPost, "/api/sessions/"+testSessionRef+"/resize/viewer", strings.NewReader(body))
+	recorder := httptest.NewRecorder()
+
+	server.handleResizeViewerAPI(recorder, request, testSessionRef, managed)
 
 	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d; body=%q", recorder.Code, http.StatusOK, recorder.Body.String())
+		t.Fatalf("status = %d, body = %q", recorder.Code, recorder.Body.String())
 	}
 	for _, call := range runner.calls {
-		if len(call) > 0 && call[0] == "run" {
-			t.Fatalf("transient heartbeat applied tmux command: %#v", runner.calls)
+		if len(call) > 1 && call[0] == "run" && call[2] == "resize-window" {
+			t.Fatalf("keyboard/transient heartbeat resized tmux: %#v", runner.calls)
 		}
+	}
+}
+
+func TestResizeViewerHeartbeatBoundsRetainedClientMetadata(t *testing.T) {
+	runner := &resizeAPIRunner{}
+	server := &Server{
+		identity: newIdentityStore(),
+		resize:   newResizeStore(filepath.Join(t.TempDir(), "resize"), time.Minute),
+		tmux:     tmux.NewClientWithRunner(runner),
+	}
+	managed := registry.Session{ID: "alpha", PublicRef: testSessionRef, TmuxName: "alpha", PID: 300}
+	topology, err := server.identity.refresh(context.Background(), server.tmux, managed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := `{"viewerId":"` + testViewerID + `","paneRef":"` + string(topology.ActivePaneRef) + `","width":80,"height":24}`
+	request := httptest.NewRequest(http.MethodPost, "/api/sessions/"+testSessionRef+"/resize/viewer", strings.NewReader(body))
+	request.Header.Set("User-Agent", strings.Repeat("agent", maxViewerUserAgentBytes))
+	request.RemoteAddr = strings.Repeat("1", maxViewerIPBytes+100)
+	recorder := httptest.NewRecorder()
+
+	server.handleResizeViewerAPI(recorder, request, testSessionRef, managed)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status/body = %d/%q", recorder.Code, recorder.Body.String())
+	}
+	viewer, ok := server.resize.Viewer(testSessionRef, testViewerID)
+	if !ok {
+		t.Fatal("bounded viewer metadata was not recorded")
+	}
+	if len(viewer.UserAgent) > maxViewerUserAgentBytes || len(viewer.IP) > maxViewerIPBytes {
+		t.Fatalf("retained viewer metadata is unbounded: user-agent=%d ip=%d", len(viewer.UserAgent), len(viewer.IP))
 	}
 }
 
 type resizeAPIRunner struct {
-	resizeClients string
-	calls         [][]string
+	calls [][]string
 }
 
-func (r *resizeAPIRunner) Output(ctx context.Context, name string, args ...string) ([]byte, error) {
-	if len(args) > 0 && args[0] == "list-clients" {
-		r.calls = append(r.calls, append([]string{"output", name}, args...))
-		if r.resizeClients == "" {
-			return nil, errors.New("no resize clients")
-		}
-		return []byte(r.resizeClients), nil
+func (r *resizeAPIRunner) Output(_ context.Context, name string, args ...string) ([]byte, error) {
+	r.calls = append(r.calls, append([]string{"output", name}, args...))
+	if len(args) == 0 {
+		return nil, errors.New("missing command")
 	}
-	return nil, errors.New("unsupported output")
+	switch {
+	case args[0] == "list-panes":
+		return []byte("@7\x1f%42\x1f1\x1f1\x1f120\x1f40\x1fshell\n"), nil
+	case args[0] == "display-message" && strings.Contains(args[len(args)-1], "#{pane_id}"):
+		return []byte("100\x1f101\x1f%42\n"), nil
+	case args[0] == "display-message":
+		return []byte("100\x1f101\n"), nil
+	default:
+		return nil, errors.New("unsupported output")
+	}
 }
 
-func (r *resizeAPIRunner) Run(ctx context.Context, name string, args ...string) error {
+func (r *resizeAPIRunner) Run(_ context.Context, name string, args ...string) error {
 	r.calls = append(r.calls, append([]string{"run", name}, args...))
 	return nil
 }

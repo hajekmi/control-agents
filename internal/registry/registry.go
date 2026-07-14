@@ -1,26 +1,36 @@
 package registry
 
 import (
+	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 )
 
-var sessionIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+var sessionIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+var publicRefPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{32}$`)
+
+// ErrInvalidSessionRecord marks registry contents that cannot identify a safe
+// managed session. Filesystem and persistence failures deliberately do not
+// wrap this error so lifecycle callers can distinguish absence/invalid input
+// from an operational dependency failure.
+var ErrInvalidSessionRecord = errors.New("invalid managed session registry record")
 
 type Session struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
+	PublicRef string `json:"publicRef"`
 	TmuxName  string `json:"tmuxName"`
 	Socket    string `json:"socket"`
 	PID       int    `json:"pid"`
@@ -31,25 +41,18 @@ type Session struct {
 type Store struct {
 	stateDir    string
 	sessionsDir string
-	liveness    livenessChecks
+	tmuxAlive   func(name string) error
 	logger      *slog.Logger
 }
 
-type livenessChecks struct {
-	processAlive func(pid int) error
-	tmuxAlive    func(name string) error
-	socketAlive  func(path string) error
-}
-
 func NewStore(stateDir string) *Store {
+	if absolute, err := filepath.Abs(stateDir); err == nil {
+		stateDir = absolute
+	}
 	return &Store{
 		stateDir:    stateDir,
 		sessionsDir: filepath.Join(stateDir, "sessions"),
-		liveness: livenessChecks{
-			processAlive: processAlive,
-			tmuxAlive:    tmuxAlive,
-			socketAlive:  socketAlive,
-		},
+		tmuxAlive:   tmuxAlive,
 	}
 }
 
@@ -58,16 +61,35 @@ func (s *Store) SetLogger(logger *slog.Logger) {
 }
 
 func (s *Store) Ensure() error {
+	if err := ensurePrivateDir(s.stateDir); err != nil {
+		return fmt.Errorf("create state dir: %w", err)
+	}
 	if err := os.MkdirAll(filepath.Join(s.stateDir, "sockets"), 0o700); err != nil {
 		return fmt.Errorf("create sockets dir: %w", err)
 	}
+	if err := os.Chmod(filepath.Join(s.stateDir, "sockets"), 0o700); err != nil {
+		return fmt.Errorf("set sockets dir permissions: %w", err)
+	}
 	if err := os.MkdirAll(s.sessionsDir, 0o700); err != nil {
 		return fmt.Errorf("create sessions dir: %w", err)
+	}
+	if err := os.Chmod(s.sessionsDir, 0o700); err != nil {
+		return fmt.Errorf("set sessions dir permissions: %w", err)
 	}
 	return nil
 }
 
 func (s *Store) List() ([]Session, error) {
+	return s.list(false)
+}
+
+// ListCompatible includes the narrow legacy wrapper format accepted for
+// lifecycle migration. Callers must canonicalize records before exposing them.
+func (s *Store) ListCompatible() ([]Session, error) {
+	return s.list(true)
+}
+
+func (s *Store) list(compatible bool) ([]Session, error) {
 	if err := s.Ensure(); err != nil {
 		return nil, err
 	}
@@ -82,29 +104,16 @@ func (s *Store) List() ([]Session, error) {
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
 			continue
 		}
-		session, err := s.Read(strings.TrimSuffix(entry.Name(), ".json"))
-		if err != nil {
-			s.logWarn("ignore invalid session registry entry", "file", entry.Name(), "error", err)
-			continue
+		id := strings.TrimSuffix(entry.Name(), ".json")
+		var session Session
+		var err error
+		if compatible {
+			session, err = s.ReadCompatible(id)
+		} else {
+			session, err = s.Read(id)
 		}
-		if alive, reason, livenessErr := s.aliveReason(session); !alive {
-			args := []any{
-				"session", session.ID,
-				"reason", reason,
-				"pid", session.PID,
-				"tmux", session.TmuxName,
-				"socket", session.Socket,
-			}
-			if livenessErr != nil {
-				args = append(args, "error", livenessErr)
-			}
-			s.logWarn(
-				"remove stale session registry entry",
-				args...,
-			)
-			if err := s.Remove(session.ID); err != nil {
-				s.logWarn("failed to remove stale session registry entry", "session", session.ID, "error", err)
-			}
+		if err != nil {
+			s.logWarn("ignore invalid session registry entry", "reason_code", "invalid_record")
 			continue
 		}
 		sessions = append(sessions, session)
@@ -122,9 +131,93 @@ func (s *Store) List() ([]Session, error) {
 	return sessions, nil
 }
 
+// Write atomically replaces a durable managed-session record.
+func (s *Store) Write(session Session) error {
+	if err := s.Ensure(); err != nil {
+		return err
+	}
+	if err := s.validateCanonical(session); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(session, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode session %q: %w", session.ID, err)
+	}
+	data = append(data, '\n')
+	temporary, err := os.CreateTemp(s.sessionsDir, "."+session.ID+"-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temporary session %q: %w", session.ID, err)
+	}
+	temporaryPath := temporary.Name()
+	removeTemporary := true
+	defer func() {
+		_ = temporary.Close()
+		if removeTemporary {
+			_ = os.Remove(temporaryPath)
+		}
+	}()
+	if err := temporary.Chmod(0o600); err != nil {
+		return fmt.Errorf("set temporary session permissions: %w", err)
+	}
+	if _, err := temporary.Write(data); err != nil {
+		return fmt.Errorf("write temporary session %q: %w", session.ID, err)
+	}
+	if err := temporary.Sync(); err != nil {
+		return fmt.Errorf("sync temporary session %q: %w", session.ID, err)
+	}
+	if err := temporary.Close(); err != nil {
+		return fmt.Errorf("close temporary session %q: %w", session.ID, err)
+	}
+	if err := os.Rename(temporaryPath, s.sessionPath(session.ID)); err != nil {
+		return fmt.Errorf("replace session %q: %w", session.ID, err)
+	}
+	removeTemporary = false
+	if err := os.Chmod(s.sessionPath(session.ID), 0o600); err != nil {
+		return fmt.Errorf("set session %q permissions: %w", session.ID, err)
+	}
+	directory, err := os.Open(s.sessionsDir)
+	if err != nil {
+		return fmt.Errorf("open sessions directory for sync: %w", err)
+	}
+	defer directory.Close()
+	if err := directory.Sync(); err != nil {
+		return fmt.Errorf("sync sessions directory: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) Read(id string) (Session, error) {
+	return s.read(id, false)
+}
+
+// ReadCompatible accepts only legacy records whose tmux identity and socket
+// already match the canonical ID. It permits a historical display-only Name
+// so the lifecycle can migrate that field atomically under its session lock.
+func (s *Store) ReadCompatible(id string) (Session, error) {
+	return s.read(id, true)
+}
+
+// ReadByPublicRef resolves only the opaque public reference. Canonical names
+// are deliberately not accepted as public authorization identities.
+func (s *Store) ReadByPublicRef(ref string) (Session, error) {
+	if !ValidPublicRef(ref) {
+		return Session{}, fmt.Errorf("%w: invalid public session reference", ErrInvalidSessionRecord)
+	}
+	sessions, err := s.List()
+	if err != nil {
+		return Session{}, err
+	}
+	for _, session := range sessions {
+		if session.PublicRef == ref {
+			return session, nil
+		}
+	}
+	return Session{}, os.ErrNotExist
+}
+
+func (s *Store) read(id string, compatible bool) (Session, error) {
 	if !ValidID(id) {
-		return Session{}, fmt.Errorf("invalid session id %q", id)
+		return Session{}, fmt.Errorf("%w: invalid session id %q", ErrInvalidSessionRecord, id)
 	}
 	path := s.sessionPath(id)
 	data, err := os.ReadFile(path)
@@ -133,10 +226,19 @@ func (s *Store) Read(id string) (Session, error) {
 	}
 	var session Session
 	if err := json.Unmarshal(data, &session); err != nil {
-		return Session{}, fmt.Errorf("decode session %q: %w", id, err)
+		return Session{}, fmt.Errorf("%w: decode session %q: %v", ErrInvalidSessionRecord, id, err)
 	}
-	if err := session.Validate(); err != nil {
-		return Session{}, err
+	if session.ID != id {
+		return Session{}, fmt.Errorf("%w: session file %q contains id %q", ErrInvalidSessionRecord, id, session.ID)
+	}
+	var validateErr error
+	if compatible {
+		validateErr = s.validateCompatible(session)
+	} else {
+		validateErr = s.validateCanonical(session)
+	}
+	if validateErr != nil {
+		return Session{}, fmt.Errorf("%w: session %q: %v", ErrInvalidSessionRecord, id, validateErr)
 	}
 	return session, nil
 }
@@ -152,26 +254,7 @@ func (s *Store) Remove(id string) error {
 }
 
 func (s *Store) Alive(session Session) bool {
-	alive, _, _ := s.aliveReason(session)
-	return alive
-}
-
-func (s *Store) aliveReason(session Session) (bool, string, error) {
-	if session.PID <= 0 {
-		return false, "invalid_pid", nil
-	}
-	if err := s.liveness.processAlive(session.PID); err != nil {
-		return false, "process_not_alive", err
-	}
-	if err := s.liveness.socketAlive(session.Socket); err != nil {
-		return false, "socket_not_alive", err
-	}
-	if session.TmuxName != "" {
-		if err := s.liveness.tmuxAlive(session.TmuxName); err != nil {
-			return false, "tmux_session_not_alive", err
-		}
-	}
-	return true, "", nil
+	return session.TmuxName != "" && s.tmuxAlive(session.TmuxName) == nil
 }
 
 func (s *Store) logWarn(message string, args ...any) {
@@ -188,35 +271,80 @@ func (session Session) Validate() error {
 	if !ValidID(session.ID) {
 		return fmt.Errorf("invalid session id %q", session.ID)
 	}
-	if strings.TrimSpace(session.Name) == "" {
-		return errors.New("session name cannot be empty")
+	if session.Name != session.ID {
+		return errors.New("session name must equal session id")
 	}
-	if strings.TrimSpace(session.TmuxName) == "" {
-		return errors.New("tmux name cannot be empty")
+	if !ValidPublicRef(session.PublicRef) {
+		return errors.New("session public reference must be opaque")
+	}
+	if session.TmuxName != session.ID {
+		return errors.New("tmux name must equal session id")
 	}
 	if strings.TrimSpace(session.Socket) == "" || !filepath.IsAbs(session.Socket) {
 		return errors.New("socket path must be absolute")
 	}
-	if session.PID <= 0 {
-		return errors.New("pid must be positive")
+	if session.PID < 0 {
+		return errors.New("pid cannot be negative")
 	}
 	return nil
 }
 
-func ValidID(id string) bool {
-	return id != "." && id != ".." && sessionIDPattern.MatchString(id)
-}
-
-func processAlive(pid int) error {
-	process, err := os.FindProcess(pid)
-	if err != nil {
+func (s *Store) validateCanonical(session Session) error {
+	if err := session.Validate(); err != nil {
 		return err
 	}
-	return process.Signal(syscall.Signal(0))
+	if session.Socket != s.expectedSocket(session.ID) {
+		return errors.New("session socket must match canonical state socket path")
+	}
+	return nil
+}
+
+func (s *Store) validateCompatible(session Session) error {
+	if !ValidID(session.ID) {
+		return fmt.Errorf("invalid session id %q", session.ID)
+	}
+	if strings.TrimSpace(session.Name) == "" {
+		return errors.New("legacy session name cannot be empty")
+	}
+	if session.PublicRef != "" && !ValidPublicRef(session.PublicRef) {
+		return errors.New("legacy session public reference is invalid")
+	}
+	if session.TmuxName != session.ID {
+		return errors.New("legacy tmux name must equal session id")
+	}
+	if session.PID < 0 {
+		return errors.New("pid cannot be negative")
+	}
+	if session.Socket != s.expectedSocket(session.ID) {
+		return errors.New("legacy session socket must match canonical state socket path")
+	}
+	return nil
+}
+
+func (s *Store) expectedSocket(id string) string {
+	return filepath.Join(s.stateDir, "sockets", id+".sock")
+}
+
+func ValidID(id string) bool {
+	return sessionIDPattern.MatchString(id)
+}
+
+func ValidPublicRef(ref string) bool {
+	return publicRefPattern.MatchString(ref)
+}
+
+func NewPublicRef() (string, error) {
+	random := make([]byte, 24)
+	if _, err := rand.Read(random); err != nil {
+		return "", fmt.Errorf("generate public session reference: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(random), nil
 }
 
 func tmuxAlive(name string) error {
-	cmd := exec.Command("tmux", "has-session", "-t", name)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "tmux", "has-session", "-t", name)
 	output, err := cmd.CombinedOutput()
 	if err == nil {
 		return nil
@@ -228,18 +356,12 @@ func tmuxAlive(name string) error {
 	return fmt.Errorf("%w: %s", err, message)
 }
 
-func socketAlive(path string) error {
-	info, err := os.Stat(path)
-	if err != nil {
+func ensurePrivateDir(path string) error {
+	if err := os.MkdirAll(path, 0o700); err != nil {
 		return err
 	}
-	if info.Mode()&os.ModeSocket == 0 {
-		return fmt.Errorf("%s is not a unix socket", path)
-	}
-	conn, err := net.DialTimeout("unix", path, 200*time.Millisecond)
-	if err != nil {
+	if err := os.Chmod(path, fs.FileMode(0o700)); err != nil {
 		return err
 	}
-	_ = conn.Close()
 	return nil
 }

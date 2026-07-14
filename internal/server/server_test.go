@@ -1,9 +1,13 @@
 package server
 
 import (
+	"bytes"
+	"encoding/json"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -27,9 +31,10 @@ func TestUnauthenticatedAPIReturnsUnauthorized(t *testing.T) {
 func TestStaticAssetsArePublic(t *testing.T) {
 	handler := newTestServer(t)
 	tests := map[string][]string{
-		"/app.js":     {"fetchSessions"},
-		"/login.js":   {"URLSearchParams"},
-		"/styles.css": {".login-panel", ".terminal-frame[hidden]"},
+		"/app.js":               {"fetchSessions"},
+		"/login.js":             {"URLSearchParams"},
+		"/terminal-observer.js": {"ObservedWebSocket"},
+		"/styles.css":           {".login-panel", ".terminal-frame[hidden]"},
 	}
 	for path, wants := range tests {
 		recorder := httptest.NewRecorder()
@@ -70,6 +75,36 @@ func TestSecurityHeadersAreSet(t *testing.T) {
 			t.Fatalf("%s = %q, want to contain %q", header, got, want)
 		}
 	}
+	csp := recorder.Header().Get("Content-Security-Policy")
+	if csp != appContentSecurityPolicy {
+		t.Fatalf("application CSP = %q, want exact self-only policy %q", csp, appContentSecurityPolicy)
+	}
+	for _, forbidden := range []string{"'unsafe-inline'", "http:", "https:", "ws:", "wss:", "data:"} {
+		if strings.Contains(csp, forbidden) {
+			t.Fatalf("application CSP permits forbidden source %q: %q", forbidden, csp)
+		}
+	}
+}
+
+func TestBrowserCodeHasNoRawHTMLTerminalRenderingOrInlineScripts(t *testing.T) {
+	application, err := fs.ReadFile(staticFS, "static/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"innerHTML", "outerHTML", "insertAdjacentHTML", "createContextualFragment"} {
+		if strings.Contains(string(application), forbidden) {
+			t.Fatalf("browser application uses raw HTML sink %q", forbidden)
+		}
+	}
+	for _, path := range []string{"static/index.html", "static/login.html"} {
+		data, err := fs.ReadFile(staticFS, path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if regexp.MustCompile(`<script(?:\s[^>]*)?>\s*[^<\s]`).Match(data) {
+			t.Fatalf("%s contains an inline script", path)
+		}
+	}
 }
 
 func TestLogoutRequiresSameOrigin(t *testing.T) {
@@ -85,6 +120,14 @@ func TestLogoutRequiresSameOrigin(t *testing.T) {
 		{name: "cross origin", origin: "https://evil.test", want: http.StatusForbidden},
 		{name: "same origin", origin: "https://control.test", want: http.StatusFound},
 		{name: "same origin referer fallback", origin: "referer:https://control.test/", want: http.StatusFound},
+		{name: "origin userinfo", origin: "https://user@control.test", want: http.StatusForbidden},
+		{name: "origin trailing slash", origin: "https://control.test/", want: http.StatusForbidden},
+		{name: "origin path", origin: "https://control.test/path", want: http.StatusForbidden},
+		{name: "origin query", origin: "https://control.test?x=1", want: http.StatusForbidden},
+		{name: "origin empty query", origin: "https://control.test?", want: http.StatusForbidden},
+		{name: "origin fragment", origin: "https://control.test#fragment", want: http.StatusForbidden},
+		{name: "origin empty fragment", origin: "https://control.test#", want: http.StatusForbidden},
+		{name: "origin surrounding whitespace", origin: " https://control.test", want: http.StatusForbidden},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -97,12 +140,74 @@ func TestLogoutRequiresSameOrigin(t *testing.T) {
 			for _, cookie := range cookies {
 				request.AddCookie(cookie)
 			}
+			request.Header.Set(csrfHeader, csrfTokenForCookies(t, handler, cookies))
 			recorder := httptest.NewRecorder()
 
 			handler.ServeHTTP(recorder, request)
 
 			if recorder.Code != tt.want {
 				t.Fatalf("status = %d, want %d", recorder.Code, tt.want)
+			}
+		})
+	}
+}
+
+func TestAuthenticatedMutationRequiresCSRF(t *testing.T) {
+	handler := newTestServer(t)
+	cookies := loginCookies(t, handler)
+	request := httptest.NewRequest(http.MethodPost, "https://control.test/logout", nil)
+	request.Header.Set("Origin", "https://control.test")
+	for _, cookie := range cookies {
+		request.AddCookie(cookie)
+	}
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("missing CSRF status = %d, want forbidden", recorder.Code)
+	}
+	request = httptest.NewRequest(http.MethodPost, "https://control.test/logout", nil)
+	request.Header.Set("Origin", "https://control.test")
+	request.Header.Set(csrfHeader, csrfTokenForCookies(t, handler, cookies)+"tampered")
+	for _, cookie := range cookies {
+		request.AddCookie(cookie)
+	}
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("tampered CSRF status = %d, want forbidden", recorder.Code)
+	}
+}
+
+func TestEveryAuthenticatedHTTPMutationSurfaceRequiresCSRF(t *testing.T) {
+	handler := newTestServer(t)
+	cookies := loginCookies(t, handler)
+	paths := []struct {
+		method string
+		path   string
+	}{
+		{http.MethodPost, "/logout"},
+		{http.MethodPost, "/api/sessions"},
+		{http.MethodDelete, "/api/sessions/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+		{http.MethodPost, "/api/sessions/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/keys"},
+		{http.MethodPost, "/api/sessions/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/paste/token"},
+		{http.MethodPost, "/api/sessions/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/paste"},
+		{http.MethodPost, "/api/sessions/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/resize"},
+		{http.MethodPost, "/api/sessions/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/resize/viewer"},
+		{http.MethodPost, "/api/sessions/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/tmux-control"},
+		{http.MethodPost, "/api/v1/panes/p_abcdefghijklmnopqrstuvwx/history-snapshots"},
+		{http.MethodDelete, "/api/v1/history-snapshots/hs_abcdefghijklmnopqrstuvwx"},
+	}
+	for _, test := range paths {
+		t.Run(test.method+" "+test.path, func(t *testing.T) {
+			request := httptest.NewRequest(test.method, "https://control.test"+test.path, strings.NewReader(`{}`))
+			request.Header.Set("Origin", "https://control.test")
+			for _, cookie := range cookies {
+				request.AddCookie(cookie)
+			}
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, request)
+			if recorder.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want CSRF rejection", recorder.Code)
 			}
 		})
 	}
@@ -120,6 +225,75 @@ func TestTerminalWebSocketRequiresSameOrigin(t *testing.T) {
 
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusForbidden)
+	}
+}
+
+func TestDuplicateOriginHeadersAreRejected(t *testing.T) {
+	handler := newTestServer(t)
+	cookies := loginCookies(t, handler)
+
+	mutation := httptest.NewRequest(http.MethodPost, "https://control.test/logout", nil)
+	mutation.Header.Add("Origin", "https://control.test")
+	mutation.Header.Add("Origin", "https://control.test")
+	mutation.Header.Set(csrfHeader, csrfTokenForCookies(t, handler, cookies))
+	for _, cookie := range cookies {
+		mutation.AddCookie(cookie)
+	}
+	mutationResponse := httptest.NewRecorder()
+	handler.ServeHTTP(mutationResponse, mutation)
+	if mutationResponse.Code != http.StatusForbidden {
+		t.Fatalf("duplicate mutation origins status = %d", mutationResponse.Code)
+	}
+
+	websocket := httptest.NewRequest(http.MethodGet, "https://control.test/terminal/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/ws", nil)
+	websocket.Header.Set("Connection", "Upgrade")
+	websocket.Header.Set("Upgrade", "websocket")
+	websocket.Header.Add("Origin", "https://control.test")
+	websocket.Header.Add("Origin", "https://control.test")
+	websocketResponse := httptest.NewRecorder()
+	handler.ServeHTTP(websocketResponse, websocket)
+	if websocketResponse.Code != http.StatusForbidden {
+		t.Fatalf("duplicate WebSocket origins status = %d", websocketResponse.Code)
+	}
+}
+
+func TestTerminalWebSocketOriginMustMatchExactly(t *testing.T) {
+	handler := newTestServer(t)
+	for _, test := range []struct {
+		name    string
+		origin  string
+		referer string
+		want    int
+	}{
+		{name: "missing", want: http.StatusForbidden},
+		{name: "referer is not origin", referer: "https://control.test/", want: http.StatusForbidden},
+		{name: "host suffix", origin: "https://control.test.evil.example", want: http.StatusForbidden},
+		{name: "scheme mismatch", origin: "http://control.test", want: http.StatusForbidden},
+		{name: "userinfo", origin: "https://user@control.test", want: http.StatusForbidden},
+		{name: "trailing slash", origin: "https://control.test/", want: http.StatusForbidden},
+		{name: "path", origin: "https://control.test/ws", want: http.StatusForbidden},
+		{name: "query", origin: "https://control.test?ws=1", want: http.StatusForbidden},
+		{name: "fragment", origin: "https://control.test#ws", want: http.StatusForbidden},
+		{name: "empty fragment", origin: "https://control.test#", want: http.StatusForbidden},
+		{name: "exact", origin: "https://control.test", want: http.StatusUnauthorized},
+		{name: "exact default port", origin: "https://control.test:443", want: http.StatusUnauthorized},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "https://control.test/terminal/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/ws", nil)
+			request.Header.Set("Connection", "Upgrade")
+			request.Header.Set("Upgrade", "websocket")
+			if test.origin != "" {
+				request.Header.Set("Origin", test.origin)
+			}
+			if test.referer != "" {
+				request.Header.Set("Referer", test.referer)
+			}
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, request)
+			if recorder.Code != test.want {
+				t.Fatalf("status = %d, want %d", recorder.Code, test.want)
+			}
+		})
 	}
 }
 
@@ -220,19 +394,61 @@ func TestRootAfterLoginReturnsIndexWithoutRedirect(t *testing.T) {
 	}
 }
 
+func TestSensitiveDiagnosticAndKeyUploadSurfacesAreAbsent(t *testing.T) {
+	handler := newTestServer(t)
+	cookies := loginCookies(t, handler)
+	for _, path := range []string{
+		"/debug/pprof/", "/debug/pprof/heap", "/api/diagnostics", "/api/heap-dump",
+		"/api/ssh-keys", "/api/sessions/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/ssh-key",
+	} {
+		request := httptest.NewRequest(http.MethodGet, "https://control.test"+path, nil)
+		for _, cookie := range cookies {
+			request.AddCookie(cookie)
+		}
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusNotFound {
+			t.Fatalf("%s status = %d, want absent", path, recorder.Code)
+		}
+	}
+}
+
+func TestPanicRecoveryLogsNoPanicValueOrRequestData(t *testing.T) {
+	const canary = "PANIC-CANARY-817c7d"
+	logs := &bytes.Buffer{}
+	server := newTestServerInstance(t, slog.New(slog.NewJSONHandler(logs, nil)))
+	server.mux.HandleFunc("/panic-test", func(http.ResponseWriter, *http.Request) { panic(canary) })
+	cookies := loginCookies(t, server)
+	request := httptest.NewRequest(http.MethodGet, "https://control.test/panic-test?secret="+canary, nil)
+	for _, cookie := range cookies {
+		request.AddCookie(cookie)
+	}
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("panic status = %d", recorder.Code)
+	}
+	if strings.Contains(logs.String(), canary) || !strings.Contains(logs.String(), `"reason_code":"panic"`) {
+		t.Fatalf("panic log is not content-free: %s", logs.String())
+	}
+}
+
 func TestParseSessionAPIPath(t *testing.T) {
-	id, suffix, ok := parseSessionAPIPath("/api/sessions/main-1/scroll")
-	if !ok || id != "main-1" || suffix != "scroll" {
+	id, suffix, ok := parseSessionAPIPath("/api/sessions/" + testSessionRef + "/scroll")
+	if !ok || id != testSessionRef || suffix != "scroll" {
 		t.Fatalf("id=%q suffix=%q ok=%v", id, suffix, ok)
 	}
 
-	id, suffix, ok = parseSessionAPIPath("/api/sessions/main-1/resize/viewer")
-	if !ok || id != "main-1" || suffix != "resize/viewer" {
+	id, suffix, ok = parseSessionAPIPath("/api/sessions/" + testSessionRef + "/resize/viewer")
+	if !ok || id != testSessionRef || suffix != "resize/viewer" {
 		t.Fatalf("id=%q suffix=%q ok=%v", id, suffix, ok)
 	}
 
 	if _, _, ok := parseSessionAPIPath("/api/sessions/../scroll"); ok {
 		t.Fatal("path traversal id was accepted")
+	}
+	if _, _, ok := parseSessionAPIPath("/api/sessions/alpha/scroll"); ok {
+		t.Fatal("canonical session name was accepted as public API identity")
 	}
 }
 
@@ -243,6 +459,26 @@ func loginCookies(t *testing.T, handler http.Handler) []*http.Cookie {
 		t.Fatalf("login status = %d", recorder.Code)
 	}
 	return recorder.Result().Cookies()
+}
+
+func csrfTokenForCookies(t *testing.T, handler http.Handler, cookies []*http.Cookie) string {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodGet, "https://control.test/api/csrf", nil)
+	for _, cookie := range cookies {
+		request.AddCookie(cookie)
+	}
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("CSRF token status/body = %d/%q", recorder.Code, recorder.Body.String())
+	}
+	var payload struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil || payload.Token == "" {
+		t.Fatalf("invalid CSRF token response: %v %q", err, recorder.Body.String())
+	}
+	return payload.Token
 }
 
 func postLogin(t *testing.T, handler http.Handler, remoteAddr, password string) *httptest.ResponseRecorder {
@@ -256,15 +492,21 @@ func postLogin(t *testing.T, handler http.Handler, remoteAddr, password string) 
 }
 
 func newTestServer(t *testing.T) http.Handler {
+	return newTestServerInstance(t, slog.Default())
+}
+
+func newTestServerInstance(t *testing.T, logger *slog.Logger) *Server {
 	t.Helper()
 	cfg := config.Config{
-		BindAddr:  "127.0.0.1",
-		Port:      8080,
-		Password:  "secret",
-		StateDir:  filepath.Join(t.TempDir(), "state"),
-		CookieTTL: 60,
+		BindAddr:         "127.0.0.1",
+		Port:             8080,
+		Password:         "secret",
+		StateDir:         filepath.Join(t.TempDir(), "state"),
+		CookieTTL:        60,
+		MaxSessions:      32,
+		SnapshotMaxBytes: 32 * 1024 * 1024,
 	}
-	handler, err := New(cfg, slog.Default())
+	handler, err := New(cfg, logger)
 	if err != nil {
 		t.Fatal(err)
 	}

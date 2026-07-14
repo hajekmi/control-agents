@@ -55,6 +55,62 @@ func TestLoadFromEnvReadsPasswordFile(t *testing.T) {
 	if cfg.CookieTTL != 48*60*60 {
 		t.Fatalf("cookie ttl = %d, want 172800", cfg.CookieTTL)
 	}
+	if cfg.MaxSessions != 32 {
+		t.Fatalf("max sessions = %d, want 32", cfg.MaxSessions)
+	}
+	if cfg.SnapshotMaxBytes != 32*1024*1024 {
+		t.Fatalf("snapshot max bytes = %d, want 32 MiB", cfg.SnapshotMaxBytes)
+	}
+}
+
+func TestLoadFromEnvReadsSnapshotMaxBytes(t *testing.T) {
+	t.Setenv("CONTROL_AGENTS_PASSWORD", "secret")
+	t.Setenv("CONTROL_AGENTS_SNAPSHOT_MAX_BYTES", "1048576")
+
+	cfg, err := LoadFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SnapshotMaxBytes != 1048576 {
+		t.Fatalf("snapshot max bytes = %d, want 1048576", cfg.SnapshotMaxBytes)
+	}
+}
+
+func TestLoadFromEnvRejectsInvalidSnapshotMaxBytes(t *testing.T) {
+	for _, value := range []string{"0", "-1", "1.5", "many"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("CONTROL_AGENTS_PASSWORD", "secret")
+			t.Setenv("CONTROL_AGENTS_SNAPSHOT_MAX_BYTES", value)
+			if _, err := LoadFromEnv(); err == nil {
+				t.Fatalf("CONTROL_AGENTS_SNAPSHOT_MAX_BYTES=%q was accepted", value)
+			}
+		})
+	}
+}
+
+func TestLoadFromEnvReadsMaxSessions(t *testing.T) {
+	t.Setenv("CONTROL_AGENTS_PASSWORD", "secret")
+	t.Setenv("CONTROL_AGENTS_MAX_SESSIONS", "7")
+
+	cfg, err := LoadFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MaxSessions != 7 {
+		t.Fatalf("max sessions = %d, want 7", cfg.MaxSessions)
+	}
+}
+
+func TestLoadFromEnvRejectsInvalidMaxSessions(t *testing.T) {
+	for _, value := range []string{"0", "-1", "1.5", "many"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("CONTROL_AGENTS_PASSWORD", "secret")
+			t.Setenv("CONTROL_AGENTS_MAX_SESSIONS", value)
+			if _, err := LoadFromEnv(); err == nil {
+				t.Fatalf("CONTROL_AGENTS_MAX_SESSIONS=%q was accepted", value)
+			}
+		})
+	}
 }
 
 func TestLoadFromEnvReadsTLSPathOverrides(t *testing.T) {
@@ -93,11 +149,13 @@ func TestLoadFromEnvReadsAuthSecretPathOverride(t *testing.T) {
 
 func TestValidateRejectsInvalidPort(t *testing.T) {
 	cfg := Config{
-		BindAddr:  "127.0.0.1",
-		Port:      70000,
-		Password:  "secret",
-		StateDir:  t.TempDir(),
-		CookieTTL: 60,
+		BindAddr:         "127.0.0.1",
+		Port:             70000,
+		Password:         "secret",
+		StateDir:         t.TempDir(),
+		CookieTTL:        60,
+		MaxSessions:      32,
+		SnapshotMaxBytes: 32 * 1024 * 1024,
 	}
 
 	if err := cfg.Validate(); err == nil {

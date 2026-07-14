@@ -2,13 +2,19 @@ package tmux
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 type CommandRunner interface {
@@ -26,37 +32,64 @@ func (ExecRunner) Run(ctx context.Context, name string, args ...string) error {
 	return exec.CommandContext(ctx, name, args...).Run()
 }
 
+func (ExecRunner) RunWithInput(ctx context.Context, input io.Reader, name string, args ...string) error {
+	command := exec.CommandContext(ctx, name, args...)
+	command.Stdin = input
+	return command.Run()
+}
+
+func (ExecRunner) OutputLimited(ctx context.Context, limit int64, name string, args ...string) ([]byte, error) {
+	if limit <= 0 {
+		return nil, ErrSnapshotTooLarge
+	}
+	command := exec.CommandContext(ctx, name, args...)
+	stdout, err := command.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	if err := command.Start(); err != nil {
+		return nil, err
+	}
+	output, readErr := io.ReadAll(io.LimitReader(stdout, limit+1))
+	if int64(len(output)) > limit {
+		_ = command.Process.Kill()
+		_ = command.Wait()
+		return nil, ErrSnapshotTooLarge
+	}
+	waitErr := command.Wait()
+	if readErr != nil {
+		return nil, readErr
+	}
+	if waitErr != nil {
+		return nil, waitErr
+	}
+	return output, nil
+}
+
 type Client struct {
 	runner            CommandRunner
 	processDescendant func(pid, ancestor int) bool
-}
-
-type ScrollState struct {
-	Position       int  `json:"position"`
-	HistorySize    int  `json:"historySize"`
-	PaneHeight     int  `json:"paneHeight"`
-	ScrollTop      int  `json:"scrollTop"`
-	ScrollMax      int  `json:"scrollMax"`
-	InCopyMode     bool `json:"inCopyMode"`
-	WindowHeight   int  `json:"windowHeight,omitempty"`
-	WindowOffsetY  int  `json:"windowOffsetY,omitempty"`
-	WindowOverflow int  `json:"windowOverflow,omitempty"`
-	clientName     string
-	clientHeight   int
-}
-
-type ScrollRequest struct {
-	Action string `json:"action"`
-	Amount int    `json:"amount,omitempty"`
-	Value  int    `json:"value,omitempty"`
+	binary            string
 }
 
 type KeyRequest struct {
 	Key string `json:"key"`
 }
 
-type Capture struct {
-	Text string `json:"text"`
+type HistoryMetadata struct {
+	Columns         int
+	Rows            int
+	HistorySize     int
+	HistoryLimit    int
+	HistoryBytes    int64
+	AlternateScreen bool
+	OutputEpoch     int64
+}
+
+type HistoryCapture struct {
+	Text   string
+	Before HistoryMetadata
+	After  HistoryMetadata
 }
 
 type PasteRequest struct {
@@ -70,10 +103,33 @@ type Window struct {
 	Panes  int    `json:"panes"`
 }
 
+type PaneGeneration struct {
+	ServerStart string
+	ServerPID   int
+	PaneID      string
+}
+
+type TopologyPane struct {
+	ID         string
+	WindowID   string
+	Name       string
+	Active     bool
+	WindowName string
+	WindowOpen bool
+	Width      int
+	Height     int
+	Generation PaneGeneration
+}
+
+type Topology struct {
+	ServerStart string
+	ServerPID   int
+	Panes       []TopologyPane
+}
+
 type ControlRequest struct {
-	Action      string `json:"action"`
-	WindowIndex *int   `json:"windowIndex,omitempty"`
-	Name        string `json:"name,omitempty"`
+	Action string
+	Name   string
 }
 
 type ResizeState struct {
@@ -93,12 +149,32 @@ type ResizeClient struct {
 	Web      bool   `json:"web"`
 }
 
+type ManagedSessionOptions struct {
+	WindowSize  string
+	Mouse       string
+	StatusLeft  string
+	SSHAuthSock string
+}
+
 var ErrUnsupportedKey = errors.New("unsupported key")
 var ErrUnsupportedControlAction = errors.New("unsupported tmux control action")
 var ErrInvalidControlRequest = errors.New("invalid tmux control request")
 var ErrInvalidPaste = errors.New("invalid paste")
+var ErrInvalidInput = errors.New("invalid terminal input")
+var ErrSnapshotTooLarge = errors.New("terminal snapshot exceeds byte limit")
+var ErrPaneGenerationChanged = errors.New("tmux pane generation changed")
 
-const MaxPasteBytes = 64 * 1024
+const (
+	MaxPasteBytes        = 64 * 1024
+	DefaultSnapshotBytes = 32 * 1024 * 1024
+	ManagedHistoryLimit  = 50000
+	managedWindowHook    = "window-linked[900]"
+	managedWindowCommand = "set-option -w window-size manual"
+)
+
+var rawWindowIDPattern = regexp.MustCompile(`^@[0-9]+$`)
+var rawPaneIDPattern = regexp.MustCompile(`^%[0-9]+$`)
+var positiveDecimalPattern = regexp.MustCompile(`^[1-9][0-9]*$`)
 
 var supportedKeys = map[string]string{
 	"ctrl-a":    "C-a",
@@ -130,108 +206,310 @@ func NewClient() *Client {
 	return NewClientWithRunner(ExecRunner{})
 }
 
+func NewClientWithBinary(binary string) *Client {
+	client := NewClientWithRunner(ExecRunner{})
+	if strings.TrimSpace(binary) != "" {
+		client.binary = binary
+	}
+	return client
+}
+
 func NewClientWithRunner(runner CommandRunner) *Client {
 	return &Client{
 		runner:            runner,
 		processDescendant: processDescendsFrom,
+		binary:            "tmux",
 	}
 }
 
-func (c *Client) Status(ctx context.Context, target string) (ScrollState, error) {
-	return c.status(ctx, target, 0)
+func (c *Client) HasSession(ctx context.Context, target string) (bool, error) {
+	err := c.runner.Run(ctx, c.binary, "has-session", "-t", target)
+	if err == nil {
+		return true, nil
+	}
+	var exitError *exec.ExitError
+	if errors.As(err, &exitError) {
+		return false, nil
+	}
+	return false, err
 }
 
-func (c *Client) StatusForProcess(ctx context.Context, target string, processPID int) (ScrollState, error) {
-	return c.status(ctx, target, processPID)
+func (c *Client) CreateManagedSession(ctx context.Context, name, home string, options ManagedSessionOptions) error {
+	if strings.TrimSpace(home) == "" {
+		return errors.New("managed session home directory cannot be empty")
+	}
+	// The bootstrap pane directly executes tmux wait-for and is removed before
+	// this function returns. This gives the new session an exact, private scope
+	// where its history default and window hook can be installed before the
+	// durable user shell is created, without changing global tmux options.
+	arguments := []string{
+		"start-server", ";",
+		"new-session", "-d", "-s", name, "-c", home,
+	}
+	if options.SSHAuthSock != "" {
+		arguments = append(arguments, "-e", "SSH_AUTH_SOCK="+options.SSHAuthSock)
+	}
+	arguments = append(arguments,
+		c.binary, "wait-for", "control-agents-bootstrap-"+name, ";",
+		"set-option", "-t", name, "history-limit", strconv.Itoa(ManagedHistoryLimit), ";",
+		"set-hook", "-t", name, managedWindowHook, managedWindowCommand, ";",
+		"new-window", "-d", "-a", "-t", name+":", "-c", home, ";",
+		"kill-window", "-t", name+":",
+	)
+	if err := c.runner.Run(ctx, c.binary, arguments...); err != nil {
+		return err
+	}
+	return c.ConfigureManagedSession(ctx, name, options)
 }
 
-func (c *Client) status(ctx context.Context, target string, processPID int) (ScrollState, error) {
-	output, err := c.runner.Output(ctx, "tmux", "display-message", "-p", "-t", target, "#{pane_in_mode}|#{scroll_position}|#{history_size}|#{pane_height}")
+func (c *Client) ConfigureManagedSession(ctx context.Context, name string, options ManagedSessionOptions) error {
+	if err := c.ConfigureHistory(ctx, name); err != nil {
+		return err
+	}
+	if err := c.ConfigureManualWindowSize(ctx, name); err != nil {
+		return err
+	}
+	commands := [][]string{
+		{"set-option", "-t", name, "destroy-unattached", "off"},
+		{"set-option", "-t", name, "mouse", options.Mouse},
+		{"set-option", "-t", name, "status-left-length", "80"},
+		{"set-option", "-t", name, "status-left", escapeFormatLiteral(options.StatusLeft)},
+		{"set-option", "-t", name, "status-right", "#{pane_current_path}"},
+	}
+	if options.SSHAuthSock != "" {
+		commands = append(commands, []string{"set-environment", "-t", name, "SSH_AUTH_SOCK", options.SSHAuthSock})
+	}
+	for _, args := range commands {
+		if err := c.runner.Run(ctx, c.binary, args...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ConfigureHistory updates only the exact managed session. Tmux does not
+// reconstruct history already discarded by existing panes, so creation calls
+// install this session default before creating the durable user pane.
+func (c *Client) ConfigureHistory(ctx context.Context, target string) error {
+	return c.runner.Run(ctx, c.binary, "set-option", "-t", target, "history-limit", strconv.Itoa(ManagedHistoryLimit))
+}
+
+// ConfigureManualWindowSize installs the session-local synchronous hook before
+// migrating existing windows. A concurrently created or linked window is
+// therefore covered either by the hook or by the following enumeration, with
+// no periodic-reconciliation gap. Setting the option does not call
+// resize-window, so existing windows keep their current dimensions.
+func (c *Client) ConfigureManualWindowSize(ctx context.Context, target string) error {
+	if err := c.runner.Run(ctx, c.binary, "set-hook", "-t", target, managedWindowHook, managedWindowCommand); err != nil {
+		return err
+	}
+	windowIDs, err := c.managedWindowIDs(ctx, target)
 	if err != nil {
-		return ScrollState{}, err
+		return err
 	}
-	state, err := parseScrollState(string(output))
+	for _, windowID := range windowIDs {
+		if err := c.runner.Run(ctx, c.binary, "set-option", "-w", "-t", windowID, "window-size", "manual"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *Client) managedWindowIDs(ctx context.Context, target string) ([]string, error) {
+	output, err := c.runner.Output(ctx, c.binary, "list-windows", "-t", target, "-F", "#{window_id}")
 	if err != nil {
-		return ScrollState{}, err
+		return nil, err
 	}
-	if view, err := c.scrollClient(ctx, target, processPID); err == nil {
-		state.applyClientView(view)
+	windowIDs := strings.Fields(string(output))
+	if len(windowIDs) == 0 {
+		return nil, errors.New("managed tmux session contains no windows")
 	}
-	return state, nil
+	for _, windowID := range windowIDs {
+		if !rawWindowIDPattern.MatchString(windowID) {
+			return nil, errors.New("unexpected tmux window id")
+		}
+	}
+	return windowIDs, nil
 }
 
-func (c *Client) Scroll(ctx context.Context, target string, request ScrollRequest) (ScrollState, error) {
-	return c.scroll(ctx, target, request, 0)
+// SetSessionEnvironment updates one variable in a tmux session environment so
+// future windows and panes inherit it without mutating tmux's global state.
+func (c *Client) SetSessionEnvironment(ctx context.Context, target, name, value string) error {
+	if strings.TrimSpace(name) == "" || strings.Contains(name, "=") {
+		return errors.New("invalid tmux environment variable name")
+	}
+	return c.runner.Run(ctx, c.binary, "set-environment", "-t", target, name, value)
 }
 
-func (c *Client) ScrollForProcess(ctx context.Context, target string, processPID int, request ScrollRequest) (ScrollState, error) {
-	return c.scroll(ctx, target, request, processPID)
+func (c *Client) KillSession(ctx context.Context, target string) error {
+	return c.runner.Run(ctx, c.binary, "kill-session", "-t", target)
 }
 
-func (c *Client) Capture(ctx context.Context, target string) (Capture, error) {
-	output, err := c.runner.Output(ctx, "tmux", "capture-pane", "-p", "-S", "-2000", "-E", "-1", "-t", target)
+func (c *Client) CaptureHistory(ctx context.Context, target string, maxBytes int64, outputEpoch func() int64) (HistoryCapture, error) {
+	before, err := c.historyMetadata(ctx, target)
 	if err != nil {
-		return Capture{}, err
+		return HistoryCapture{}, err
 	}
-	return Capture{Text: strings.TrimRight(string(output), "\n")}, nil
+	if outputEpoch != nil {
+		before.OutputEpoch = outputEpoch()
+	}
+	var output []byte
+	if runner, ok := c.runner.(interface {
+		OutputLimited(context.Context, int64, string, ...string) ([]byte, error)
+	}); ok {
+		output, err = runner.OutputLimited(ctx, maxBytes, c.binary, "capture-pane", "-p", "-e", "-J", "-S", "-", "-E", "-", "-t", target)
+	} else {
+		output, err = c.runner.Output(ctx, c.binary, "capture-pane", "-p", "-e", "-J", "-S", "-", "-E", "-", "-t", target)
+		if err == nil && int64(len(output)) > maxBytes {
+			err = ErrSnapshotTooLarge
+		}
+	}
+	if err != nil {
+		return HistoryCapture{}, err
+	}
+	afterOutputEpoch := int64(0)
+	if outputEpoch != nil {
+		afterOutputEpoch = outputEpoch()
+	}
+	after, err := c.historyMetadata(ctx, target)
+	if err != nil {
+		return HistoryCapture{}, err
+	}
+	after.OutputEpoch = afterOutputEpoch
+	return HistoryCapture{
+		Text:   strings.TrimSuffix(string(output), "\n"),
+		Before: before,
+		After:  after,
+	}, nil
 }
 
-func (c *Client) Paste(ctx context.Context, target string, request PasteRequest) error {
+func (c *Client) historyMetadata(ctx context.Context, target string) (HistoryMetadata, error) {
+	format := strings.Join([]string{
+		"#{pane_width}", "#{pane_height}", "#{history_size}",
+		"#{history_limit}", "#{history_bytes}", "#{alternate_on}",
+	}, "\x1f")
+	output, err := c.runner.Output(ctx, c.binary, "display-message", "-p", "-t", target, format)
+	if err != nil {
+		return HistoryMetadata{}, err
+	}
+	return parseHistoryMetadata(string(output))
+}
+
+func (c *Client) HistoryActivity(ctx context.Context, target string) (HistoryMetadata, error) {
+	return c.historyMetadata(ctx, target)
+}
+
+func (c *Client) Topology(ctx context.Context, target string) (Topology, error) {
+	incarnationOutput, err := c.runner.Output(ctx, c.binary, "display-message", "-p", "-t", target, "#{start_time}\x1f#{pid}")
+	if err != nil {
+		return Topology{}, err
+	}
+	serverStart, serverPID, err := parseServerIncarnation(string(incarnationOutput))
+	if err != nil {
+		return Topology{}, err
+	}
+	format := strings.Join([]string{
+		"#{window_id}", "#{pane_id}", "#{window_active}", "#{pane_active}",
+		"#{window_width}", "#{window_height}", "#{window_name}",
+	}, "\x1f")
+	output, err := c.runner.Output(ctx, c.binary, "list-panes", "-s", "-t", target, "-F", format)
+	if err != nil {
+		return Topology{}, err
+	}
+	topology := Topology{ServerStart: serverStart, ServerPID: serverPID}
+	for _, line := range strings.Split(strings.TrimRight(string(output), "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "\x1f", 7)
+		if len(parts) != 7 || !rawWindowIDPattern.MatchString(parts[0]) || !rawPaneIDPattern.MatchString(parts[1]) {
+			continue
+		}
+		width, widthErr := strconv.Atoi(parts[4])
+		height, heightErr := strconv.Atoi(parts[5])
+		if widthErr != nil || heightErr != nil || width <= 0 || height <= 0 {
+			continue
+		}
+		topology.Panes = append(topology.Panes, TopologyPane{
+			ID:         parts[1],
+			WindowID:   parts[0],
+			Active:     parts[3] == "1",
+			WindowName: parts[6],
+			WindowOpen: parts[2] == "1",
+			Width:      width,
+			Height:     height,
+			Generation: PaneGeneration{ServerStart: serverStart, ServerPID: serverPID, PaneID: parts[1]},
+		})
+	}
+	if len(topology.Panes) == 0 {
+		return Topology{}, errors.New("tmux topology contains no panes")
+	}
+	return topology, nil
+}
+
+func (c *Client) VerifyPaneGeneration(ctx context.Context, paneID string, expected PaneGeneration) error {
+	if !rawPaneIDPattern.MatchString(paneID) || paneID != expected.PaneID || !validServerIncarnation(expected.ServerStart, expected.ServerPID) {
+		return ErrPaneGenerationChanged
+	}
+	output, err := c.runner.Output(ctx, c.binary, "display-message", "-p", "-t", paneID, "#{start_time}\x1f#{pid}\x1f#{pane_id}")
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrPaneGenerationChanged, err)
+	}
+	parts := strings.Split(strings.TrimSpace(string(output)), "\x1f")
+	if len(parts) != 3 {
+		return ErrPaneGenerationChanged
+	}
+	serverStart, serverPID, err := parseServerIncarnation(parts[0] + "\x1f" + parts[1])
+	if err != nil || serverStart != expected.ServerStart || serverPID != expected.ServerPID || parts[2] != expected.PaneID {
+		return ErrPaneGenerationChanged
+	}
+	return nil
+}
+
+func parseServerIncarnation(output string) (string, int, error) {
+	parts := strings.Split(strings.TrimSpace(output), "\x1f")
+	if len(parts) != 2 || !positiveDecimalPattern.MatchString(parts[0]) || !positiveDecimalPattern.MatchString(parts[1]) {
+		return "", 0, errors.New("unexpected tmux server incarnation format")
+	}
+	serverPID, err := strconv.Atoi(parts[1])
+	if err != nil || serverPID <= 0 {
+		return "", 0, errors.New("unexpected tmux server incarnation format")
+	}
+	return parts[0], serverPID, nil
+}
+
+func validServerIncarnation(serverStart string, serverPID int) bool {
+	return positiveDecimalPattern.MatchString(serverStart) && serverPID > 0
+}
+
+func (c *Client) Paste(ctx context.Context, target string, request PasteRequest) (result error) {
 	text := request.Text
-	if len([]byte(text)) > MaxPasteBytes || strings.ContainsRune(text, '\x00') {
+	if !utf8.ValidString(text) || len(text) > MaxPasteBytes || strings.ContainsRune(text, '\x00') {
 		return ErrInvalidPaste
 	}
 	if text == "" {
 		return nil
 	}
-	buffer := fmt.Sprintf("control-agents-paste-%d", time.Now().UnixNano())
-	if err := c.runner.Run(ctx, "tmux", "set-buffer", "-b", buffer, "--", text); err != nil {
+	inputRunner, ok := c.runner.(interface {
+		RunWithInput(context.Context, io.Reader, string, ...string) error
+	})
+	if !ok {
+		return errors.New("tmux command runner does not support stdin")
+	}
+	random := make([]byte, 18)
+	if _, err := rand.Read(random); err != nil {
+		return errors.New("generate tmux paste buffer identity")
+	}
+	buffer := "control-agents-paste-" + base64.RawURLEncoding.EncodeToString(random)
+	defer func() {
+		cleanupContext, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		result = errors.Join(result, c.runner.Run(cleanupContext, c.binary, "delete-buffer", "-b", buffer))
+	}()
+	if err := inputRunner.RunWithInput(ctx, strings.NewReader(text), c.binary, "load-buffer", "-b", buffer, "-"); err != nil {
 		return err
 	}
-	return c.runner.Run(ctx, "tmux", "paste-buffer", "-d", "-b", buffer, "-t", target)
-}
-
-func (c *Client) scroll(ctx context.Context, target string, request ScrollRequest, processPID int) (ScrollState, error) {
-	state, err := c.status(ctx, target, processPID)
-	if err != nil {
-		return ScrollState{}, err
-	}
-	amount := normalizedAmount(request.Amount)
-
-	switch request.Action {
-	case "line-up":
-		if err := c.lineUp(ctx, target, state, amount); err != nil {
-			return ScrollState{}, err
-		}
-	case "line-down":
-		if err := c.lineDown(ctx, target, state, amount, processPID); err != nil {
-			return ScrollState{}, err
-		}
-	case "page-up":
-		if err := c.pageUp(ctx, target, state, amount); err != nil {
-			return ScrollState{}, err
-		}
-	case "page-down":
-		if err := c.pageDown(ctx, target, state, amount, processPID); err != nil {
-			return ScrollState{}, err
-		}
-	case "top":
-		if err := c.top(ctx, target, state); err != nil {
-			return ScrollState{}, err
-		}
-	case "bottom":
-		if err := c.bottom(ctx, target, state, processPID); err != nil {
-			return ScrollState{}, err
-		}
-	case "set":
-		if err := c.setScrollTop(ctx, target, state, request.Value, processPID); err != nil {
-			return ScrollState{}, err
-		}
-	default:
-		return ScrollState{}, fmt.Errorf("unsupported scroll action %q", request.Action)
-	}
-
-	return c.status(ctx, target, processPID)
+	return c.runner.Run(ctx, c.binary, "paste-buffer", "-p", "-r", "-b", buffer, "-t", target)
 }
 
 func (c *Client) SendKey(ctx context.Context, target string, request KeyRequest) error {
@@ -239,32 +517,29 @@ func (c *Client) SendKey(ctx context.Context, target string, request KeyRequest)
 	if !ok {
 		return fmt.Errorf("%w %q", ErrUnsupportedKey, request.Key)
 	}
+	return c.runner.Run(ctx, c.binary, "send-keys", "-t", target, key)
+}
 
-	state, err := c.Status(ctx, target)
-	if err != nil {
-		return err
+// SendText forwards one printable input rune after the browser has returned
+// from local History to Live. The literal flag and direct argument vector keep
+// the text out of tmux command parsing and shell interpolation.
+func (c *Client) SendText(ctx context.Context, target, text string) error {
+	if len([]rune(text)) != 1 || strings.IndexFunc(text, func(r rune) bool { return !unicode.IsPrint(r) }) >= 0 {
+		return ErrInvalidInput
 	}
-	if state.InCopyMode {
-		if err := c.sendCopyCommand(ctx, target, 1, "cancel"); err != nil {
-			return err
-		}
-	}
-	return c.runner.Run(ctx, "tmux", "send-keys", "-t", target, key)
+	return c.runner.Run(ctx, c.binary, "send-keys", "-l", "-t", target, "--", text)
 }
 
 func (c *Client) Windows(ctx context.Context, target string) ([]Window, error) {
-	output, err := c.runner.Output(ctx, "tmux", "list-windows", "-t", target, "-F", windowListFormat())
+	output, err := c.runner.Output(ctx, c.binary, "list-windows", "-t", target, "-F", windowListFormat())
 	if err != nil {
 		return nil, err
 	}
 	return parseWindows(string(output))
 }
 
-func (c *Client) Control(ctx context.Context, target string, request ControlRequest) ([]Window, error) {
-	if err := c.control(ctx, target, request); err != nil {
-		return nil, err
-	}
-	return c.Windows(ctx, target)
+func (c *Client) Control(ctx context.Context, paneTarget, windowTarget string, request ControlRequest) error {
+	return c.control(ctx, paneTarget, windowTarget, request)
 }
 
 func (c *Client) ListResizeClients(ctx context.Context, target string, processPID int) ([]ResizeClient, error) {
@@ -303,10 +578,10 @@ func (c *Client) ResizeManual(ctx context.Context, target string, width, height 
 	if width <= 0 || height <= 0 {
 		return ResizeState{}, errors.New("invalid tmux resize dimensions")
 	}
-	if err := c.runner.Run(ctx, "tmux", "set-option", "-w", "-t", target+":", "window-size", "manual"); err != nil {
+	if err := c.runner.Run(ctx, c.binary, "set-option", "-w", "-t", target, "window-size", "manual"); err != nil {
 		return ResizeState{}, err
 	}
-	if err := c.runner.Run(ctx, "tmux", "resize-window", "-t", target+":", "-x", strconv.Itoa(width), "-y", strconv.Itoa(height)); err != nil {
+	if err := c.runner.Run(ctx, c.binary, "resize-window", "-t", target, "-x", strconv.Itoa(width), "-y", strconv.Itoa(height)); err != nil {
 		return ResizeState{}, err
 	}
 	return ResizeState{
@@ -316,307 +591,83 @@ func (c *Client) ResizeManual(ctx context.Context, target string, width, height 
 	}, nil
 }
 
+func (c *Client) ResizeFixed(ctx context.Context, target string) (ResizeState, error) {
+	if err := c.runner.Run(ctx, c.binary, "set-option", "-w", "-t", target, "window-size", "manual"); err != nil {
+		return ResizeState{}, err
+	}
+	return ResizeState{Mode: "fixed"}, nil
+}
+
 func (c *Client) ResizeSmallest(ctx context.Context, target string) (ResizeState, error) {
-	if err := c.runner.Run(ctx, "tmux", "set-option", "-w", "-t", target+":", "window-size", "smallest"); err != nil {
+	if err := c.runner.Run(ctx, c.binary, "set-option", "-w", "-t", target, "window-size", "smallest"); err != nil {
 		return ResizeState{}, err
 	}
 	return ResizeState{Mode: "smallest"}, nil
 }
 
-func (c *Client) control(ctx context.Context, target string, request ControlRequest) error {
+func (c *Client) control(ctx context.Context, paneTarget, windowTarget string, request ControlRequest) error {
 	action := strings.ToLower(strings.TrimSpace(request.Action))
 	switch action {
 	case "new-window":
-		return c.runner.Run(ctx, "tmux", "new-window", "-t", target+":", "-c", "#{pane_current_path}")
-	case "select-window":
-		if request.WindowIndex == nil || *request.WindowIndex < 0 {
-			return fmt.Errorf("%w: missing window index", ErrInvalidControlRequest)
+		if !rawWindowIDPattern.MatchString(windowTarget) {
+			return fmt.Errorf("%w: missing window reference", ErrInvalidControlRequest)
 		}
-		return c.runner.Run(ctx, "tmux", "select-window", "-t", fmt.Sprintf("%s:%d", target, *request.WindowIndex))
+		return c.runner.Run(ctx, c.binary, "new-window", "-a", "-t", windowTarget, "-c", "#{pane_current_path}")
+	case "select-window":
+		if !rawWindowIDPattern.MatchString(windowTarget) {
+			return fmt.Errorf("%w: missing window reference", ErrInvalidControlRequest)
+		}
+		return c.runner.Run(ctx, c.binary, "select-window", "-t", windowTarget)
 	case "next-window":
-		return c.runner.Run(ctx, "tmux", "next-window", "-t", target)
+		return c.runner.Run(ctx, c.binary, "next-window", "-t", paneTarget)
 	case "previous-window":
-		return c.runner.Run(ctx, "tmux", "previous-window", "-t", target)
+		return c.runner.Run(ctx, c.binary, "previous-window", "-t", paneTarget)
 	case "rename-window":
 		name := strings.TrimSpace(request.Name)
-		if name == "" || strings.ContainsAny(name, "\r\n") {
+		if name == "" || strings.IndexFunc(name, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
 			return fmt.Errorf("%w: invalid window name", ErrInvalidControlRequest)
 		}
-		return c.runner.Run(ctx, "tmux", "rename-window", "-t", target, name)
+		return c.runner.Run(ctx, c.binary, "rename-window", "-t", paneTarget, name)
 	case "split-horizontal":
-		return c.runner.Run(ctx, "tmux", "split-window", "-h", "-t", target, "-c", "#{pane_current_path}")
+		return c.runner.Run(ctx, c.binary, "split-window", "-h", "-t", paneTarget, "-c", "#{pane_current_path}")
 	case "split-vertical":
-		return c.runner.Run(ctx, "tmux", "split-window", "-v", "-t", target, "-c", "#{pane_current_path}")
+		return c.runner.Run(ctx, c.binary, "split-window", "-v", "-t", paneTarget, "-c", "#{pane_current_path}")
 	case "select-pane-left":
-		return c.runner.Run(ctx, "tmux", "select-pane", "-t", target, "-L")
+		return c.runner.Run(ctx, c.binary, "select-pane", "-t", paneTarget, "-L")
 	case "select-pane-right":
-		return c.runner.Run(ctx, "tmux", "select-pane", "-t", target, "-R")
+		return c.runner.Run(ctx, c.binary, "select-pane", "-t", paneTarget, "-R")
 	case "select-pane-up":
-		return c.runner.Run(ctx, "tmux", "select-pane", "-t", target, "-U")
+		return c.runner.Run(ctx, c.binary, "select-pane", "-t", paneTarget, "-U")
 	case "select-pane-down":
-		return c.runner.Run(ctx, "tmux", "select-pane", "-t", target, "-D")
+		return c.runner.Run(ctx, c.binary, "select-pane", "-t", paneTarget, "-D")
 	case "resize-pane-left":
-		return c.runner.Run(ctx, "tmux", "resize-pane", "-t", target, "-L", "5")
+		return c.runner.Run(ctx, c.binary, "resize-pane", "-t", paneTarget, "-L", "5")
 	case "resize-pane-right":
-		return c.runner.Run(ctx, "tmux", "resize-pane", "-t", target, "-R", "5")
+		return c.runner.Run(ctx, c.binary, "resize-pane", "-t", paneTarget, "-R", "5")
 	case "resize-pane-up":
-		return c.runner.Run(ctx, "tmux", "resize-pane", "-t", target, "-U", "5")
+		return c.runner.Run(ctx, c.binary, "resize-pane", "-t", paneTarget, "-U", "5")
 	case "resize-pane-down":
-		return c.runner.Run(ctx, "tmux", "resize-pane", "-t", target, "-D", "5")
+		return c.runner.Run(ctx, c.binary, "resize-pane", "-t", paneTarget, "-D", "5")
 	case "toggle-zoom":
-		return c.runner.Run(ctx, "tmux", "resize-pane", "-Z", "-t", target)
+		return c.runner.Run(ctx, c.binary, "resize-pane", "-Z", "-t", paneTarget)
 	case "close-pane":
-		return c.runner.Run(ctx, "tmux", "kill-pane", "-t", target)
+		return c.runner.Run(ctx, c.binary, "kill-pane", "-t", paneTarget)
 	case "close-window":
-		return c.runner.Run(ctx, "tmux", "kill-window", "-t", target)
+		if !rawWindowIDPattern.MatchString(windowTarget) {
+			return fmt.Errorf("%w: missing window reference", ErrInvalidControlRequest)
+		}
+		return c.runner.Run(ctx, c.binary, "kill-window", "-t", windowTarget)
 	case "choose-window":
-		return c.runner.Run(ctx, "tmux", "choose-tree", "-w", "-t", target)
+		return c.runner.Run(ctx, c.binary, "choose-tree", "-w", "-t", paneTarget)
 	case "command-prompt":
-		return c.runner.Run(ctx, "tmux", "command-prompt", "-t", target)
+		return c.runner.Run(ctx, c.binary, "command-prompt", "-t", paneTarget)
 	default:
 		return fmt.Errorf("%w %q", ErrUnsupportedControlAction, request.Action)
 	}
 }
 
-func (c *Client) copyMode(ctx context.Context, target string) error {
-	return c.runner.Run(ctx, "tmux", "copy-mode", "-t", target)
-}
-
-func (c *Client) bottom(ctx context.Context, target string, state ScrollState, processPID int) error {
-	if err := c.copyMode(ctx, target); err != nil {
-		return err
-	}
-	if err := c.sendCopyCommand(ctx, target, 1, "history-bottom"); err != nil {
-		return err
-	}
-	if err := c.sendCopyCommand(ctx, target, 1, "cancel"); err != nil {
-		return err
-	}
-	if state.hasClientOverflow() {
-		next, err := c.status(ctx, target, processPID)
-		if err != nil {
-			return err
-		}
-		return c.setClientOffset(ctx, next, next.WindowOverflow)
-	}
-	return nil
-}
-
-func (c *Client) setScrollTop(ctx context.Context, target string, state ScrollState, value int, processPID int) error {
-	if value < 0 {
-		value = 0
-	}
-	if value > state.ScrollMax {
-		value = state.ScrollMax
-	}
-	if value >= state.HistorySize {
-		if state.InCopyMode || state.Position > 0 {
-			if err := c.bottom(ctx, target, state, processPID); err != nil {
-				return err
-			}
-			next, err := c.status(ctx, target, processPID)
-			if err != nil {
-				return err
-			}
-			state = next
-		}
-		return c.setClientOffset(ctx, state, value-state.HistorySize)
-	}
-
-	desiredPosition := state.HistorySize - value
-	if err := c.setClientOffset(ctx, state, 0); err != nil {
-		return err
-	}
-	if err := c.copyMode(ctx, target); err != nil {
-		return err
-	}
-	if err := c.sendCopyCommand(ctx, target, 1, "history-top"); err != nil {
-		return err
-	}
-	delta := state.HistorySize - desiredPosition
-	if delta > 0 {
-		return c.sendCopyCommand(ctx, target, delta, "scroll-down")
-	}
-	return nil
-}
-
-func (c *Client) lineUp(ctx context.Context, target string, state ScrollState, amount int) error {
-	if !state.InCopyMode && state.hasClientOverflow() && state.WindowOffsetY > 0 {
-		step := min(amount, state.WindowOffsetY)
-		if err := c.adjustClientOffset(ctx, state, "up", step); err != nil {
-			return err
-		}
-		amount -= step
-	}
-	if amount <= 0 {
-		return nil
-	}
-	if err := c.copyMode(ctx, target); err != nil {
-		return err
-	}
-	return c.sendCopyCommand(ctx, target, amount, "scroll-up")
-}
-
-func (c *Client) lineDown(ctx context.Context, target string, state ScrollState, amount int, processPID int) error {
-	if state.InCopyMode || state.Position > 0 {
-		if err := c.sendCopyCommand(ctx, target, amount, "scroll-down"); err != nil {
-			return err
-		}
-		return c.cancelCopyModeAtLiveBottom(ctx, target, processPID)
-	}
-	return c.adjustClientOffset(ctx, state, "down", min(amount, state.WindowOverflow-state.WindowOffsetY))
-}
-
-func (c *Client) pageUp(ctx context.Context, target string, state ScrollState, amount int) error {
-	if !state.InCopyMode && state.hasClientOverflow() && state.WindowOffsetY > 0 {
-		step := min(amount*state.pageRows(), state.WindowOffsetY)
-		if err := c.adjustClientOffset(ctx, state, "up", step); err != nil {
-			return err
-		}
-		if step == amount*state.pageRows() {
-			return nil
-		}
-	}
-	if err := c.copyMode(ctx, target); err != nil {
-		return err
-	}
-	return c.sendCopyCommand(ctx, target, amount, "page-up")
-}
-
-func (c *Client) pageDown(ctx context.Context, target string, state ScrollState, amount int, processPID int) error {
-	if state.InCopyMode || state.Position > 0 {
-		if err := c.sendCopyCommand(ctx, target, amount, "page-down"); err != nil {
-			return err
-		}
-		return c.cancelCopyModeAtLiveBottom(ctx, target, processPID)
-	}
-	return c.adjustClientOffset(ctx, state, "down", min(amount*state.pageRows(), state.WindowOverflow-state.WindowOffsetY))
-}
-
-func (c *Client) top(ctx context.Context, target string, state ScrollState) error {
-	if err := c.setClientOffset(ctx, state, 0); err != nil {
-		return err
-	}
-	if state.HistorySize <= 0 {
-		return nil
-	}
-	if err := c.copyMode(ctx, target); err != nil {
-		return err
-	}
-	return c.sendCopyCommand(ctx, target, 1, "history-top")
-}
-
-func (c *Client) sendCopyCommand(ctx context.Context, target string, amount int, command string) error {
-	if amount <= 1 {
-		return c.runner.Run(ctx, "tmux", "send-keys", "-t", target, "-X", command)
-	}
-	return c.runner.Run(ctx, "tmux", "send-keys", "-t", target, "-X", "-N", strconv.Itoa(amount), command)
-}
-
-func (c *Client) setClientOffset(ctx context.Context, state ScrollState, value int) error {
-	if !state.hasClientOverflow() {
-		return nil
-	}
-	if value < 0 {
-		value = 0
-	}
-	if value > state.WindowOverflow {
-		value = state.WindowOverflow
-	}
-	delta := value - state.WindowOffsetY
-	if delta > 0 {
-		return c.adjustClientOffset(ctx, state, "down", delta)
-	}
-	if delta < 0 {
-		return c.adjustClientOffset(ctx, state, "up", -delta)
-	}
-	return nil
-}
-
-func (c *Client) adjustClientOffset(ctx context.Context, state ScrollState, direction string, amount int) error {
-	if amount <= 0 || state.clientName == "" {
-		return nil
-	}
-	flag := "-D"
-	if direction == "up" {
-		flag = "-U"
-	}
-	return c.runner.Run(ctx, "tmux", "refresh-client", "-t", state.clientName, flag, strconv.Itoa(amount))
-}
-
-func (c *Client) cancelCopyModeAtLiveBottom(ctx context.Context, target string, processPID int) error {
-	state, err := c.status(ctx, target, processPID)
-	if err != nil {
-		return err
-	}
-	if !state.InCopyMode || state.Position > 0 {
-		return nil
-	}
-	if err := c.sendCopyCommand(ctx, target, 1, "cancel"); err != nil {
-		return err
-	}
-	if state.hasClientOverflow() {
-		next, err := c.status(ctx, target, processPID)
-		if err != nil {
-			return err
-		}
-		return c.setClientOffset(ctx, next, next.WindowOverflow)
-	}
-	return nil
-}
-
-func parseScrollState(output string) (ScrollState, error) {
-	parts := strings.Split(strings.TrimSpace(output), "|")
-	if len(parts) != 4 {
-		return ScrollState{}, errors.New("unexpected tmux scroll status format")
-	}
-
-	inCopyMode := parts[0] == "1"
-	position, err := parseOptionalInt(parts[1])
-	if err != nil {
-		return ScrollState{}, fmt.Errorf("parse scroll position: %w", err)
-	}
-	historySize, err := parseOptionalInt(parts[2])
-	if err != nil {
-		return ScrollState{}, fmt.Errorf("parse history size: %w", err)
-	}
-	paneHeight, err := parseOptionalInt(parts[3])
-	if err != nil {
-		return ScrollState{}, fmt.Errorf("parse pane height: %w", err)
-	}
-
-	if position < 0 {
-		position = 0
-	}
-	if historySize < 0 {
-		historySize = 0
-	}
-	if position > historySize {
-		position = historySize
-	}
-	scrollTop := historySize - position
-	if scrollTop < 0 {
-		scrollTop = 0
-	}
-
-	state := ScrollState{
-		Position:    position,
-		HistorySize: historySize,
-		PaneHeight:  paneHeight,
-		ScrollTop:   scrollTop,
-		ScrollMax:   historySize,
-		InCopyMode:  inCopyMode,
-	}
-	return state, nil
-}
-
-type clientView struct {
-	name         string
-	pid          int
-	height       int
-	windowHeight int
-	offsetY      int
-	statusOn     bool
+func escapeFormatLiteral(value string) string {
+	return strings.ReplaceAll(value, "#", "##")
 }
 
 type resizeClientView struct {
@@ -629,45 +680,8 @@ type resizeClientView struct {
 	statusOn       bool
 }
 
-func (c *Client) scrollClient(ctx context.Context, target string, processPID int) (clientView, error) {
-	output, err := c.runner.Output(ctx, "tmux", "list-clients", "-t", target, "-F", "#{client_name}|#{client_pid}|#{client_height}|#{window_height}|#{window_offset_y}|#{status}")
-	if err != nil {
-		return clientView{}, err
-	}
-	var best clientView
-	var preferred clientView
-	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		view, err := parseClientView(line)
-		if err != nil {
-			continue
-		}
-		if view.name == "" || view.height <= 0 || view.windowHeight <= 0 {
-			continue
-		}
-		if processPID > 0 && c.belongsToProcess(view.pid, processPID) {
-			if preferred.name == "" || view.height < preferred.height {
-				preferred = view
-			}
-			continue
-		}
-		if best.name == "" || view.height < best.height {
-			best = view
-		}
-	}
-	if preferred.name != "" {
-		return preferred, nil
-	}
-	if best.name == "" {
-		return clientView{}, errors.New("no tmux clients")
-	}
-	return best, nil
-}
-
 func (c *Client) resizeClients(ctx context.Context, target string) ([]resizeClientView, error) {
-	output, err := c.runner.Output(ctx, "tmux", "list-clients", "-t", target, "-F", "#{client_name}|#{client_pid}|#{client_width}|#{client_height}|#{client_activity}|#{status}|#{window_width}|#{window_height}")
+	output, err := c.runner.Output(ctx, c.binary, "list-clients", "-t", target, "-F", "#{client_name}|#{client_pid}|#{client_width}|#{client_height}|#{client_activity}|#{status}|#{window_width}|#{window_height}")
 	if err != nil {
 		return nil, err
 	}
@@ -731,49 +745,6 @@ func (c *Client) belongsToProcess(pid, ancestor int) bool {
 	return c.processDescendant(pid, ancestor)
 }
 
-func parseClientView(line string) (clientView, error) {
-	parts := strings.Split(strings.TrimSpace(line), "|")
-	if len(parts) != 6 {
-		return clientView{}, errors.New("unexpected tmux client format")
-	}
-	pid, err := parseOptionalInt(parts[1])
-	if err != nil {
-		return clientView{}, fmt.Errorf("parse client pid: %w", err)
-	}
-	height, err := parseOptionalInt(parts[2])
-	if err != nil {
-		return clientView{}, fmt.Errorf("parse client height: %w", err)
-	}
-	windowHeight, err := parseOptionalInt(parts[3])
-	if err != nil {
-		return clientView{}, fmt.Errorf("parse window height: %w", err)
-	}
-	offsetY, err := parseOptionalInt(parts[4])
-	if err != nil {
-		return clientView{}, fmt.Errorf("parse window offset: %w", err)
-	}
-	if pid < 0 {
-		pid = 0
-	}
-	if height < 0 {
-		height = 0
-	}
-	if windowHeight < 0 {
-		windowHeight = 0
-	}
-	if offsetY < 0 {
-		offsetY = 0
-	}
-	return clientView{
-		name:         parts[0],
-		pid:          pid,
-		height:       height,
-		windowHeight: windowHeight,
-		offsetY:      offsetY,
-		statusOn:     strings.EqualFold(parts[5], "on") || parts[5] == "1",
-	}, nil
-}
-
 func parseResizeClientView(line string) (resizeClientView, error) {
 	parts := strings.Split(strings.TrimSpace(line), "|")
 	if len(parts) != 8 {
@@ -829,47 +800,6 @@ func parseResizeClientView(line string) (resizeClientView, error) {
 	}, nil
 }
 
-func (state *ScrollState) applyClientView(view clientView) {
-	if view.name == "" || view.height <= 0 || view.windowHeight <= 0 {
-		return
-	}
-	visibleHeight := view.visiblePaneHeight()
-	overflow := view.windowHeight - visibleHeight
-	if overflow < 0 {
-		overflow = 0
-	}
-	if view.offsetY > overflow {
-		view.offsetY = overflow
-	}
-	state.clientName = view.name
-	state.clientHeight = visibleHeight
-	state.WindowHeight = view.windowHeight
-	state.WindowOffsetY = view.offsetY
-	state.WindowOverflow = overflow
-	state.ScrollMax = state.HistorySize + overflow
-	state.ScrollTop = state.HistorySize - state.Position + view.offsetY
-	if state.ScrollTop < 0 {
-		state.ScrollTop = 0
-	}
-	if state.ScrollTop > state.ScrollMax {
-		state.ScrollTop = state.ScrollMax
-	}
-	if overflow > 0 && visibleHeight < state.PaneHeight {
-		state.PaneHeight = visibleHeight
-	}
-}
-
-func (view clientView) visiblePaneHeight() int {
-	height := view.height
-	if view.statusOn {
-		height--
-	}
-	if height < 1 {
-		return 1
-	}
-	return height
-}
-
 func (view resizeClientView) visiblePaneHeight() int {
 	height := view.height
 	if view.statusOn && !view.heightIsWindow {
@@ -879,28 +809,6 @@ func (view resizeClientView) visiblePaneHeight() int {
 		return 1
 	}
 	return height
-}
-
-func (state ScrollState) hasClientOverflow() bool {
-	return state.clientName != "" && state.WindowOverflow > 0
-}
-
-func (state ScrollState) pageRows() int {
-	rows := state.clientHeight
-	if rows <= 0 {
-		rows = state.PaneHeight
-	}
-	if rows <= 1 {
-		return 1
-	}
-	return rows - 1
-}
-
-func normalizedAmount(amount int) int {
-	if amount <= 0 {
-		return 1
-	}
-	return amount
 }
 
 func parseOptionalInt(value string) (int, error) {
@@ -915,6 +823,32 @@ func parseOptionalInt64(value string) (int64, error) {
 		return 0, nil
 	}
 	return strconv.ParseInt(value, 10, 64)
+}
+
+func parseHistoryMetadata(output string) (HistoryMetadata, error) {
+	parts := strings.Split(strings.TrimSpace(output), "\x1f")
+	if len(parts) != 6 {
+		return HistoryMetadata{}, errors.New("unexpected tmux history metadata format")
+	}
+	values := make([]int64, 6)
+	for index, value := range parts {
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || parsed < 0 {
+			return HistoryMetadata{}, errors.New("unexpected tmux history metadata format")
+		}
+		values[index] = parsed
+	}
+	if values[0] <= 0 || values[1] <= 0 || values[3] <= 0 || values[5] > 1 {
+		return HistoryMetadata{}, errors.New("unexpected tmux history metadata format")
+	}
+	return HistoryMetadata{
+		Columns:         int(values[0]),
+		Rows:            int(values[1]),
+		HistorySize:     int(values[2]),
+		HistoryLimit:    int(values[3]),
+		HistoryBytes:    values[4],
+		AlternateScreen: values[5] == 1,
+	}, nil
 }
 
 func windowListFormat() string {
@@ -984,7 +918,9 @@ func parentPID(pid int) (int, error) {
 	if parent, err := parentPIDFromProc(pid); err == nil {
 		return parent, nil
 	}
-	output, err := exec.Command("ps", "-o", "ppid=", "-p", strconv.Itoa(pid)).Output()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, "ps", "-o", "ppid=", "-p", strconv.Itoa(pid)).Output()
 	if err != nil {
 		return 0, err
 	}
