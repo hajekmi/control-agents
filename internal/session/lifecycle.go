@@ -90,9 +90,14 @@ func ConfigFromEnvironment(stateDir, homeDir string, logger *slog.Logger) (Confi
 		}
 		scrollback = parsed
 	}
+	tmuxBinary, err := tmux.ResolveBinary(homeDir)
+	if err != nil {
+		return Config{}, err
+	}
 	return Config{
 		StateDir:                stateDir,
 		HomeDir:                 homeDir,
+		TmuxBinary:              tmuxBinary,
 		WindowSize:              environmentOrDefault("CONTROL_AGENTS_TMUX_WINDOW_SIZE", defaultWindowSize),
 		Mouse:                   environmentOrDefault("CONTROL_AGENTS_TMUX_MOUSE", defaultMouse),
 		AppName:                 os.Getenv("CONTROL_AGENTS_APP_NAME"),
@@ -103,6 +108,13 @@ func ConfigFromEnvironment(stateDir, homeDir string, logger *slog.Logger) (Confi
 }
 
 func New(cfg Config) (*Manager, error) {
+	if strings.TrimSpace(cfg.TmuxBinary) == "" {
+		binary, err := tmux.ResolveBinary(cfg.HomeDir)
+		if err != nil {
+			return nil, err
+		}
+		cfg.TmuxBinary = binary
+	}
 	cfg = withDefaults(cfg)
 	if strings.TrimSpace(cfg.StateDir) == "" {
 		return nil, errors.New("managed session state directory cannot be empty")
@@ -116,6 +128,7 @@ func New(cfg Config) (*Manager, error) {
 		return nil, err
 	}
 	store := registry.NewStore(cfg.StateDir)
+	store.SetTmuxBinary(cfg.TmuxBinary)
 	store.SetLogger(cfg.Logger.With("component", "registry"))
 	manager := newManager(cfg, store, tmux.NewClientWithBinary(cfg.TmuxBinary), nil)
 	manager.bridge = newProcessBridge(cfg, manager.logsDir)

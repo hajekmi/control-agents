@@ -15,7 +15,7 @@ func TestDeploymentFilesContainNoEmbeddedPrivateKeysOrKnownSecretShapes(t *testi
 		t.Fatal(err)
 	}
 	paths := []string{
-		filepath.Join(root, "install.sh"), filepath.Join(root, "Containerfile"),
+		filepath.Join(root, "install.sh"), filepath.Join(root, "install-tmux.sh"), filepath.Join(root, "Containerfile"),
 		filepath.Join(root, "systemd"), filepath.Join(root, ".github", "workflows"),
 	}
 	patterns := []*regexp.Regexp{

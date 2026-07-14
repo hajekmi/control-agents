@@ -7,12 +7,19 @@ This plan tracks work needed to make Control Agents easier to install from a pub
 Make the first successful install require only:
 
 ```sh
-sudo apt install tmux ttyd
+sudo apt-get update
+sudo apt-get install -y bison build-essential ca-certificates curl libevent-dev libncurses-dev pkg-config ttyd
+curl -fsSL https://raw.githubusercontent.com/hajekmi/control-agents/main/install-tmux.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
 curl -fsSL https://raw.githubusercontent.com/hajekmi/control-agents/main/install.sh | sh
 systemctl --user enable control-agents.service
 systemctl --user restart control-agents.service
 control-agents
 ```
+
+The Ubuntu distro tmux package is not a supported substitute: Control Agents
+requires the checksum-verified exact tmux 3.7b installed by the shared
+user-local `install-tmux.sh` flow above.
 
 Then open:
 
@@ -127,7 +134,10 @@ Reconsider only after release binaries and `install.sh` are proven.
 When the installer exists, move the quickstart near the top:
 
 ```sh
-sudo apt install tmux ttyd
+sudo apt-get update
+sudo apt-get install -y bison build-essential ca-certificates curl libevent-dev libncurses-dev pkg-config ttyd
+curl -fsSL https://raw.githubusercontent.com/hajekmi/control-agents/main/install-tmux.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
 curl -fsSL https://raw.githubusercontent.com/hajekmi/control-agents/main/install.sh | sh
 systemctl --user enable control-agents.service
 systemctl --user restart control-agents.service

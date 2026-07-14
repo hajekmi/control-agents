@@ -207,11 +207,33 @@ func TestDirectNamedAttachExitsAfterDetach(t *testing.T) {
 }
 
 func TestTmuxAttachPreservesManagedSessionEnvironment(t *testing.T) {
-	command := tmuxAttachCommand(context.Background(), "tmux-main")
-	want := []string{"tmux", "attach-session", "-E", "-t", "tmux-main"}
+	t.Setenv("LANG", "C")
+	t.Setenv("LC_ALL", "C")
+	t.Setenv("PATH", "/operator/bin:/usr/bin:/bin")
+	managedTmux := "/managed/bin/tmux"
+	command := tmuxAttachCommand(context.Background(), managedTmux, "tmux-main")
+	want := []string{managedTmux, "attach-session", "-E", "-t", "tmux-main"}
 	if got := command.Args; strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("attach command = %v, want %v", got, want)
 	}
+	if command.Path != managedTmux {
+		t.Fatalf("attach executable = %q, want %q", command.Path, managedTmux)
+	}
+	for _, name := range []string{"LANG", "LC_ALL"} {
+		if got := commandEnvironmentValue(command.Env, name); got != "C.UTF-8" {
+			t.Fatalf("attach %s = %q, want C.UTF-8", name, got)
+		}
+	}
+}
+
+func commandEnvironmentValue(environment []string, name string) string {
+	for _, entry := range environment {
+		key, value, _ := strings.Cut(entry, "=")
+		if key == name {
+			return value
+		}
+	}
+	return ""
 }
 
 func TestSelectorRefreshesAfterAttachAndQuitsWithoutTermination(t *testing.T) {

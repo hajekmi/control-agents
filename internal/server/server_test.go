@@ -2,10 +2,12 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -15,6 +17,63 @@ import (
 
 	"control-agents/internal/config"
 )
+
+func TestServerUsesVerifiedUserLocalTmuxWithConflictingPath(t *testing.T) {
+	root := t.TempDir()
+	homeDir := filepath.Join(root, "home")
+	managedTmux := filepath.Join(homeDir, ".local", "bin", "tmux")
+	operatorBin := filepath.Join(root, "operator-bin")
+	probeLog := filepath.Join(root, "tmux.log")
+	for _, directory := range []string{filepath.Dir(managedTmux), operatorBin} {
+		if err := os.MkdirAll(directory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	managedScript := `#!/bin/sh
+if [ "${1:-}" = "-V" ]; then
+  printf '%s\n' 'tmux 3.7b'
+  exit 0
+fi
+printf '%s\n' "$0" >> "$TMUX_PROBE_LOG"
+exit 1
+`
+	operatorScript := "#!/bin/sh\nprintf '%s\\n' 'tmux 3.4'\nexit 99\n"
+	if err := os.WriteFile(managedTmux, []byte(managedScript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(operatorBin, "tmux"), []byte(operatorScript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", operatorBin+string(os.PathListSeparator)+"/usr/bin:/bin")
+	t.Setenv("LANG", "C")
+	t.Setenv("LC_ALL", "C")
+	t.Setenv("TMUX_PROBE_LOG", probeLog)
+
+	cfg := config.Config{
+		BindAddr:         "127.0.0.1",
+		Port:             8080,
+		Password:         "secret",
+		StateDir:         filepath.Join(root, "state"),
+		HomeDir:          homeDir,
+		CookieTTL:        60,
+		MaxSessions:      32,
+		SnapshotMaxBytes: 32 * 1024 * 1024,
+	}
+	application, err := New(cfg, slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := application.tmux.HasSession(context.Background(), "missing"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(probeLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(data)) != managedTmux {
+		t.Fatalf("server tmux executable = %q, want %q", strings.TrimSpace(string(data)), managedTmux)
+	}
+}
 
 func TestUnauthenticatedAPIReturnsUnauthorized(t *testing.T) {
 	handler := newTestServer(t)

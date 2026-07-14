@@ -102,7 +102,9 @@ Do not include live passwords, cookies, private keys, terminal output containing
 - Prefer binding to a private interface, VPN, SSH tunnel, or trusted reverse proxy instead of exposing the service directly to the public internet.
 - Replace the generated self-signed certificate with a trusted TLS certificate for remote use.
 - Run the service as a dedicated, least-privileged user.
-- Keep `tmux`, `ttyd`, Go, and the host OS patched.
+- Keep `ttyd`, Go, and the host OS patched. Control Agents currently supports
+  exactly checksum-verified tmux 3.7b; do not substitute an untested newer
+  tmux release without updating and validating the explicit runtime contract.
 - Review `~/.config/control-agents/env` permissions and keep it readable only by the service user.
 - Keep the state directory private: directories use mode `0700`, while registry
   records and the persistent authentication secret use mode `0600`.

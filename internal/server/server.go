@@ -210,6 +210,7 @@ func New(cfg config.Config, logger *slog.Logger) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	store.SetTmuxBinary(lifecycleConfig.TmuxBinary)
 	lifecycle, err := managedsession.New(lifecycleConfig)
 	if err != nil {
 		return nil, err
@@ -218,7 +219,12 @@ func New(cfg config.Config, logger *slog.Logger) (*Server, error) {
 		return nil, ErrStartupReconciliation
 	}
 
-	return newServerWithLifecycle(cfg, logger, store, lifecycle)
+	application, err := newServerWithLifecycle(cfg, logger, store, lifecycle)
+	if err != nil {
+		return nil, err
+	}
+	application.tmux = tmux.NewClientWithBinary(lifecycleConfig.TmuxBinary)
+	return application, nil
 }
 
 func StartupFailureReason(err error) string {

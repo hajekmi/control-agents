@@ -16,6 +16,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"control-agents/internal/tmux"
 )
 
 var sessionIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
@@ -52,12 +54,25 @@ func NewStore(stateDir string) *Store {
 	return &Store{
 		stateDir:    stateDir,
 		sessionsDir: filepath.Join(stateDir, "sessions"),
-		tmuxAlive:   tmuxAlive,
+		tmuxAlive: func(name string) error {
+			return tmuxAlive("tmux", name)
+		},
 	}
 }
 
 func (s *Store) SetLogger(logger *slog.Logger) {
 	s.logger = logger
+}
+
+// SetTmuxBinary keeps compatibility checks on the same verified executable as
+// the managed lifecycle and terminal API.
+func (s *Store) SetTmuxBinary(binary string) {
+	if strings.TrimSpace(binary) == "" {
+		binary = "tmux"
+	}
+	s.tmuxAlive = func(name string) error {
+		return tmuxAlive(binary, name)
+	}
 }
 
 func (s *Store) Ensure() error {
@@ -341,10 +356,11 @@ func NewPublicRef() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(random), nil
 }
 
-func tmuxAlive(name string) error {
+func tmuxAlive(binary, name string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "tmux", "has-session", "-t", name)
+	cmd := exec.CommandContext(ctx, binary, "has-session", "-t", name)
+	tmux.ConfigureCommand(cmd)
 	output, err := cmd.CombinedOutput()
 	if err == nil {
 		return nil

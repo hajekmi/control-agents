@@ -456,3 +456,55 @@ evidence schema instead.
     ownership. Surface a bounded content-free failure while keeping the dialog
     available, and add deterministic no-retry regressions that hold/supersede
     and fail the GET following the single successful create POST.
+26. Resolve the Ubuntu GitHub Actions failure in required `make test-e2e` from
+    workflow run `29314468396`, job `87025225753` on commit `e49e5cb`. CI
+    installed tmux, ttyd, and all Playwright engines and passed unit/syntax
+    steps, but E2E exited 2 after roughly 73 seconds before the browser matrix.
+    Public unauthenticated access exposes only the failed step, not its log.
+    Reproduce with the CI OS/package environment or add content-free bounded
+    fixture diagnostics, correct the platform-specific cause, and prove the
+    entire E2E target on both the current host and an Ubuntu-equivalent
+    environment before pushing another CI run.
+27. Fix the primary Ubuntu Quick Install path so it does not install the known
+    incompatible distro tmux 3.4 and then claim readiness. Provide one
+    checksum-verified, user-local tmux 3.7b installer reused by Quick Install
+    and CI (or an equivalently verified compatible package path), verify the
+    selected executable/version before installing Control Agents, and document
+    the required build dependencies and PATH behavior.
+28. Make the tmux topology/runtime locale contract deterministic. Exact tmux
+    3.7b under `LANG=C` rewrites the current U+001F delimiter and makes topology
+    unavailable, while `C.UTF-8` passes. Either remove the locale-sensitive
+    format or enforce and document a UTF-8 locale for the server, Go SSH client,
+    installer, service, tests, and direct invocations; add a `LANG=C` regression
+    proving the managed command path still succeeds.
+29. Move the E2E terminal capability into the repository target/fixture rather
+    than relying on workflow-only environment. `TERM=dumb make test-e2e` must
+    exercise PTY attach scenarios with an explicit capable TERM and pass; keep
+    the workflow calling the same Make target without duplicating behavior.
+30. Enforce the selected tmux path and UTF-8 locale after loading the preserved
+    operator `EnvironmentFile`. Existing `PATH=/usr/bin:/bin`, `LANG=C`, or
+    `LC_ALL=C` entries must not override the managed runtime invariants and make
+    the service select Ubuntu tmux 3.4. Correct both the committed and generated
+    user units and add a conflicting-environment-file install/service regression.
+31. Make the user-local tmux installer atomic and internally consistent. The
+    current independent `PREFIX`/`BIN_DIR` overrides can install into one path
+    and then fail while checking another, leaving partial state. Use a single
+    destination contract (or correctly wire bindir), verify the built binary
+    before replacing the live destination, and regression-test custom paths and
+    repeated installs.
+32. Align the supported tmux version contract. Documentation currently says
+    “3.7b or newer” while the installer deliberately rejects everything except
+    exactly 3.7b. Keep one explicit, tested policy across README, installer,
+    runtime checks, CI, and operations guidance.
+33. Preserve upgrade reconciliation for bridges started by the prior release
+    with relative argv suffix `tmux attach-session ...` after new processes
+    switch to a resolved absolute tmux 3.7b path. Accept only the narrowly
+    verified previous exact command shape for an already registered managed
+    bridge; keep absolute paths for every new bridge and never adopt unrelated
+    ttyd/tmux processes. Prove old-process termination, socket replacement, and
+    no orphan on host and Ubuntu migration E2E.
+34. Remove the stale Ubuntu installation guidance from
+    `INSTALL_SIMPLIFICATION_PLAN.md` that still presents `sudo apt install tmux
+    ttyd` as a successful supported path. Point both occurrences to the shared
+    checksum-verified exact-3.7b installer/dependency flow and keep all install
+    documents consistent.

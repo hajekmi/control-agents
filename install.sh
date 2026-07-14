@@ -10,6 +10,11 @@ CONFIG_DIR="${CONFIG_DIR:-"$XDG_CONFIG_HOME/control-agents"}"
 SYSTEMD_USER_DIR="${SYSTEMD_USER_DIR:-"$XDG_CONFIG_HOME/systemd/user"}"
 ENV_FILE="${ENV_FILE:-"$CONFIG_DIR/env"}"
 SERVICE_FILE="${SERVICE_FILE:-"$SYSTEMD_USER_DIR/control-agents.service"}"
+ORIGINAL_PATH="$PATH"
+LANG="C.UTF-8"
+LC_ALL="C.UTF-8"
+PATH="$BIN_DIR:$PATH"
+export LANG LC_ALL PATH
 
 die() {
   printf 'error: %s\n' "$*" >&2
@@ -106,9 +111,8 @@ UMask=0077
 Environment=CONTROL_AGENTS_BIND_ADDR=0.0.0.0
 Environment=CONTROL_AGENTS_PORT=8080
 Environment=CONTROL_AGENTS_STATE_DIR=$HOME/.local/state/control-agents
-Environment=PATH=$BIN_DIR:/home/linuxbrew/.linuxbrew/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
 EnvironmentFile=$ENV_FILE
-ExecStart=$BIN_DIR/control-agents-server
+ExecStart=/usr/bin/env PATH=$BIN_DIR:/home/linuxbrew/.linuxbrew/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 LC_ALL=C.UTF-8 $BIN_DIR/control-agents-server
 StandardOutput=journal
 StandardError=journal
 Restart=on-failure
@@ -170,13 +174,18 @@ install_binaries() {
   install -m 0755 "$client_file" "$BIN_DIR/control-agents"
 }
 
-check_runtime_dependencies() {
-  missing=""
-  command -v tmux >/dev/null 2>&1 || missing="$missing tmux"
-  command -v ttyd >/dev/null 2>&1 || missing="$missing ttyd"
-  if [ -n "$missing" ]; then
-    warn "missing runtime dependencies:$missing"
-    warn "install them with your OS package manager before starting sessions"
+verify_tmux() {
+  selected_tmux="$BIN_DIR/tmux"
+  [ -x "$selected_tmux" ] || \
+    die "tmux 3.7b is required at $selected_tmux; run install-tmux.sh with the same BIN_DIR"
+  selected_version="$("$selected_tmux" -V)"
+  [ "$selected_version" = "tmux 3.7b" ] || \
+    die "tmux 3.7b is required; selected $selected_tmux reports $selected_version"
+}
+
+check_ttyd() {
+  if ! command -v ttyd >/dev/null 2>&1; then
+    warn "ttyd is missing; install it before starting Control Agents"
   fi
 }
 
@@ -191,20 +200,26 @@ reload_systemd() {
   fi
 }
 
+case "$BIN_DIR" in
+  /*) ;;
+  *) die "BIN_DIR must be an absolute path" ;;
+esac
+
 need_cmd uname
 need_cmd tr
 need_cmd mktemp
 need_cmd install
 
+verify_tmux
 install_binaries
 write_env_file
 write_service_file
 reload_systemd
-check_runtime_dependencies
+check_ttyd
 
-case ":$PATH:" in
+case ":$ORIGINAL_PATH:" in
   *":$BIN_DIR:"*) ;;
-  *) warn "$BIN_DIR is not in PATH" ;;
+  *) warn "$BIN_DIR is not in your shell PATH; run: export PATH=\"$BIN_DIR:\$PATH\"" ;;
 esac
 
 port="$(sed -n 's/^CONTROL_AGENTS_PORT=//p' "$ENV_FILE" | tail -n 1)"

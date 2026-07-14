@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -25,15 +26,15 @@ type CommandRunner interface {
 type ExecRunner struct{}
 
 func (ExecRunner) Output(ctx context.Context, name string, args ...string) ([]byte, error) {
-	return exec.CommandContext(ctx, name, args...).Output()
+	return commandContext(ctx, name, args...).Output()
 }
 
 func (ExecRunner) Run(ctx context.Context, name string, args ...string) error {
-	return exec.CommandContext(ctx, name, args...).Run()
+	return commandContext(ctx, name, args...).Run()
 }
 
 func (ExecRunner) RunWithInput(ctx context.Context, input io.Reader, name string, args ...string) error {
-	command := exec.CommandContext(ctx, name, args...)
+	command := commandContext(ctx, name, args...)
 	command.Stdin = input
 	return command.Run()
 }
@@ -42,7 +43,7 @@ func (ExecRunner) OutputLimited(ctx context.Context, limit int64, name string, a
 	if limit <= 0 {
 		return nil, ErrSnapshotTooLarge
 	}
-	command := exec.CommandContext(ctx, name, args...)
+	command := commandContext(ctx, name, args...)
 	stdout, err := command.StdoutPipe()
 	if err != nil {
 		return nil, err
@@ -64,6 +65,109 @@ func (ExecRunner) OutputLimited(ctx context.Context, limit int64, name string, a
 		return nil, waitErr
 	}
 	return output, nil
+}
+
+const (
+	SupportedVersion = "3.7b"
+	UTF8Locale       = "C.UTF-8"
+)
+
+// ResolveBinary selects the managed tmux executable independently of the
+// caller's PATH. Release-installed server and client binaries prefer the tmux
+// executable installed beside them, then the default user-local destination.
+// PATH is only a development fallback. Every selected executable must report
+// the one tmux version supported by this release.
+func ResolveBinary(homeDir string) (string, error) {
+	executable, _ := os.Executable()
+	return resolveBinary(executable, homeDir, exec.LookPath)
+}
+
+func resolveBinary(executable, homeDir string, lookPath func(string) (string, error)) (string, error) {
+	candidates := make([]string, 0, 2)
+	if executable != "" {
+		candidates = append(candidates, filepath.Join(filepath.Dir(executable), "tmux"))
+	}
+	if homeDir != "" {
+		candidates = append(candidates, filepath.Join(homeDir, ".local", "bin", "tmux"))
+	}
+
+	seen := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		absolute, err := filepath.Abs(candidate)
+		if err != nil {
+			return "", fmt.Errorf("resolve tmux executable %q: %w", candidate, err)
+		}
+		if _, duplicate := seen[absolute]; duplicate {
+			continue
+		}
+		seen[absolute] = struct{}{}
+		if _, err := os.Stat(absolute); errors.Is(err, os.ErrNotExist) {
+			continue
+		} else if err != nil {
+			return "", fmt.Errorf("inspect tmux executable %q: %w", absolute, err)
+		}
+		if err := VerifyBinary(absolute); err != nil {
+			return "", err
+		}
+		return absolute, nil
+	}
+
+	selected, err := lookPath("tmux")
+	if err != nil {
+		return "", fmt.Errorf("tmux %s is required; install it with install-tmux.sh", SupportedVersion)
+	}
+	absolute, err := filepath.Abs(selected)
+	if err != nil {
+		return "", fmt.Errorf("resolve tmux executable %q: %w", selected, err)
+	}
+	if err := VerifyBinary(absolute); err != nil {
+		return "", err
+	}
+	return absolute, nil
+}
+
+// VerifyBinary enforces the exact supported tmux release before any managed
+// session command is allowed to run.
+func VerifyBinary(binary string) error {
+	output, err := ConfigureCommand(exec.Command(binary, "-V")).Output()
+	if err != nil {
+		return fmt.Errorf("verify tmux executable %q: %w", binary, err)
+	}
+	version := strings.TrimSpace(string(output))
+	want := "tmux " + SupportedVersion
+	if version != want {
+		return fmt.Errorf("tmux %s is required; selected %s reports %s", SupportedVersion, binary, version)
+	}
+	return nil
+}
+
+// UTF8Environment returns a copy of an environment with the deterministic
+// UTF-8 locale required by tmux format expansion. Tmux 3.7b rewrites control
+// delimiters in the C locale, which would make managed topology unavailable.
+func UTF8Environment(environment []string) []string {
+	configured := make([]string, 0, len(environment)+2)
+	for _, entry := range environment {
+		name, _, _ := strings.Cut(entry, "=")
+		if name != "LANG" && name != "LC_ALL" {
+			configured = append(configured, entry)
+		}
+	}
+	return append(configured, "LANG="+UTF8Locale, "LC_ALL="+UTF8Locale)
+}
+
+// ConfigureCommand applies the managed tmux locale to a direct command, such
+// as the Go SSH client's interactive attach or the ttyd bridge process.
+func ConfigureCommand(command *exec.Cmd) *exec.Cmd {
+	environment := command.Env
+	if environment == nil {
+		environment = os.Environ()
+	}
+	command.Env = UTF8Environment(environment)
+	return command
+}
+
+func commandContext(ctx context.Context, name string, args ...string) *exec.Cmd {
+	return ConfigureCommand(exec.CommandContext(ctx, name, args...))
 }
 
 type Client struct {

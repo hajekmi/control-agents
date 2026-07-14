@@ -8,9 +8,8 @@ UMask=0077
 Environment=CONTROL_AGENTS_BIND_ADDR=0.0.0.0
 Environment=CONTROL_AGENTS_PORT=8080
 Environment=CONTROL_AGENTS_STATE_DIR=%h/.local/state/control-agents
-Environment=PATH=%h/.local/bin:/home/linuxbrew/.linuxbrew/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
 EnvironmentFile=%h/.config/control-agents/env
-ExecStart=%h/.local/bin/control-agents-server
+ExecStart=/usr/bin/env PATH=%h/.local/bin:/home/linuxbrew/.linuxbrew/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 LC_ALL=C.UTF-8 %h/.local/bin/control-agents-server
 StandardOutput=journal
 StandardError=journal
 Restart=on-failure

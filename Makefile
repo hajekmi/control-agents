@@ -31,6 +31,8 @@ TMUX_TMPDIR ?= $(CURDIR)/.cache/tmux
 CGO_ENABLED ?= 0
 GOFLAGS ?= -buildvcs=false
 PLAYWRIGHT_PROFILE_RUNNER := node test/playwright/run_profile.js
+CONTROL_AGENTS_UTF8_LOCALE ?= C.UTF-8
+E2E_TERM ?= xterm-256color
 
 export GOCACHE
 export GOTMPDIR
@@ -38,6 +40,8 @@ export TMPDIR
 export TMUX_TMPDIR
 export CGO_ENABLED
 export GOFLAGS
+export LANG := $(CONTROL_AGENTS_UTF8_LOCALE)
+export LC_ALL := $(CONTROL_AGENTS_UTF8_LOCALE)
 
 prepare-cache:
 	mkdir -p $(GOCACHE) $(GOTMPDIR) $(TMPDIR) $(TMUX_TMPDIR)
@@ -67,7 +71,7 @@ test: prepare-cache
 	go test ./...
 
 test-e2e: build
-	RUN_E2E=1 go test -count=1 ./test/e2e
+	TERM=$(E2E_TERM) RUN_E2E=1 go test -count=1 ./test/e2e
 
 test-browser-network-boundary: prepare-playwright
 	$(PLAYWRIGHT_PROFILE_RUNNER) --network-boundary-probe

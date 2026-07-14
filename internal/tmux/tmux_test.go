@@ -4,11 +4,142 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
 	"testing"
 )
+
+func TestResolveBinaryIgnoresConflictingOperatorPath(t *testing.T) {
+	root := t.TempDir()
+	installedBin := filepath.Join(root, "custom", "bin")
+	homeDir := filepath.Join(root, "home")
+	pathBin := filepath.Join(root, "operator", "bin")
+	for _, directory := range []string{installedBin, homeDir, pathBin} {
+		if err := os.MkdirAll(directory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	installedTmux := filepath.Join(installedBin, "tmux")
+	writeFakeTmux(t, installedTmux, "tmux "+SupportedVersion)
+	pathTmux := filepath.Join(pathBin, "tmux")
+	writeFakeTmux(t, pathTmux, "tmux 3.4")
+
+	selected, err := resolveBinary(
+		filepath.Join(installedBin, "control-agents"),
+		homeDir,
+		func(string) (string, error) { return pathTmux, nil },
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected != installedTmux {
+		t.Fatalf("selected tmux = %q, want %q", selected, installedTmux)
+	}
+}
+
+func TestResolveBinaryUsesExactUserLocalVersionBeforePathFallback(t *testing.T) {
+	root := t.TempDir()
+	homeDir := filepath.Join(root, "home")
+	userTmux := filepath.Join(homeDir, ".local", "bin", "tmux")
+	writeFakeTmux(t, userTmux, "tmux "+SupportedVersion)
+	pathTmux := filepath.Join(root, "path", "tmux")
+	writeFakeTmux(t, pathTmux, "tmux 3.4")
+
+	selected, err := resolveBinary(
+		filepath.Join(root, "missing", "control-agents"),
+		homeDir,
+		func(string) (string, error) { return pathTmux, nil },
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected != userTmux {
+		t.Fatalf("selected tmux = %q, want %q", selected, userTmux)
+	}
+}
+
+func TestResolveBinaryRejectsUnsupportedInstalledVersion(t *testing.T) {
+	root := t.TempDir()
+	installedBin := filepath.Join(root, "bin")
+	installedTmux := filepath.Join(installedBin, "tmux")
+	writeFakeTmux(t, installedTmux, "tmux 3.8")
+	pathTmux := filepath.Join(root, "path", "tmux")
+	writeFakeTmux(t, pathTmux, "tmux "+SupportedVersion)
+
+	_, err := resolveBinary(
+		filepath.Join(installedBin, "control-agents-server"),
+		filepath.Join(root, "home"),
+		func(string) (string, error) { return pathTmux, nil },
+	)
+	if err == nil || !strings.Contains(err.Error(), "tmux "+SupportedVersion+" is required") {
+		t.Fatalf("unsupported installed tmux error = %v", err)
+	}
+}
+
+func writeFakeTmux(t *testing.T, path, version string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	contents := "#!/bin/sh\nprintf '%s\\n' " + strconv.Quote(version) + "\n"
+	if err := os.WriteFile(path, []byte(contents), 0o700); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestExecRunnerForcesUTF8Locale(t *testing.T) {
+	t.Setenv("LANG", "C")
+	t.Setenv("LC_ALL", "C")
+
+	output, err := (ExecRunner{}).Output(
+		context.Background(),
+		"sh", "-c", `printf '%s|%s' "$LANG" "$LC_ALL"`,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(output); got != UTF8Locale+"|"+UTF8Locale {
+		t.Fatalf("tmux command locale = %q, want %q", got, UTF8Locale+"|"+UTF8Locale)
+	}
+
+	environment := UTF8Environment([]string{"PATH=/bin", "LANG=C", "LC_ALL=C", "VALUE=kept"})
+	if got := environmentValue(environment, "LANG"); got != UTF8Locale {
+		t.Fatalf("LANG = %q, want %q", got, UTF8Locale)
+	}
+	if got := environmentValue(environment, "LC_ALL"); got != UTF8Locale {
+		t.Fatalf("LC_ALL = %q, want %q", got, UTF8Locale)
+	}
+	if got := environmentValue(environment, "VALUE"); got != "kept" {
+		t.Fatalf("VALUE = %q, want kept", got)
+	}
+	if countEnvironmentName(environment, "LANG") != 1 || countEnvironmentName(environment, "LC_ALL") != 1 {
+		t.Fatalf("locale environment contains duplicates: %#v", environment)
+	}
+}
+
+func environmentValue(environment []string, name string) string {
+	for _, entry := range environment {
+		key, value, _ := strings.Cut(entry, "=")
+		if key == name {
+			return value
+		}
+	}
+	return ""
+}
+
+func countEnvironmentName(environment []string, name string) int {
+	count := 0
+	for _, entry := range environment {
+		key, _, _ := strings.Cut(entry, "=")
+		if key == name {
+			count++
+		}
+	}
+	return count
+}
 
 func TestSendKeyUsesSupportedTmuxKeyName(t *testing.T) {
 	runner := &fakeRunner{}

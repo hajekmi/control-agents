@@ -113,6 +113,9 @@ documentation. Keep this file focused on working rules for future agents.
   prefer tmux to own all mouse handling.
 - Preserve the managed tmux status line shape: `status-left` session label,
   `status-right` current pane path, no hostname/date/time.
+- Preserve `LANG=C.UTF-8` and `LC_ALL=C.UTF-8` for the server, Go SSH client,
+  ttyd bridge, managed tmux commands, installed user service, and repository
+  tests. Tmux 3.7b under the plain C locale corrupts topology delimiters.
 - Preserve `CONTROL_AGENTS_WEB_SCROLLBACK_LINES` as the browser scrollback control.
   This is xterm.js history while the web tab is connected, not replay of past
   tmux history.

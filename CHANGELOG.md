@@ -4,6 +4,24 @@ Versions use calendar numbering: `YYYY.M.REVISION`.
 
 ## Unreleased
 
+- Pin CI to the checksum-verified tmux 3.7b upstream release instead of
+  Ubuntu 24.04's incompatible tmux 3.4 package through the same user-local
+  installer used by Quick Install, with selected executable/version checks
+  before Control Agents installation. Enforce `C.UTF-8` for the service, Go
+  client, bridge, managed tmux commands, installers, and tests so tmux format
+  delimiters remain stable even when the caller uses `LANG=C`. Give
+  pseudo-terminal E2E fixtures an explicit capable terminal type instead of
+  inheriting a noninteractive runner's `dumb` terminal.
+- Enforce the exact tmux 3.7b executable and `C.UTF-8` locale after preserved
+  user-service environment files, and make the server and SSH client prefer
+  their co-installed verified tmux even when operator `PATH` conflicts. Build
+  tmux into a temporary prefix, verify it before one atomic `BIN_DIR`
+  replacement, and support repeated custom-destination installs without a
+  second independent prefix contract.
+- Replace a registered bridge from the immediately previous relative `tmux`
+  argv with one using the resolved absolute verified tmux path during upgrade,
+  while rejecting unregistered or non-exact process shapes. Keep both Ubuntu
+  installation-plan examples on the shared checksum-verified exact-3.7b flow.
 - Add repository-owned History parser/snapshot/Paste matrices, real-tmux
   50,000-line SSH-isolation and alternate-screen fixtures, Chromium/Firefox/
   WebKit engine coverage, mobile/tablet viewport automation, and bounded

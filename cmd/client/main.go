@@ -18,6 +18,7 @@ import (
 
 	"control-agents/internal/registry"
 	managedsession "control-agents/internal/session"
+	"control-agents/internal/tmux"
 	"control-agents/internal/version"
 )
 
@@ -107,7 +108,7 @@ func runMain(args []string, stdin *os.File, stdout, stderr io.Writer, lookupEnv 
 		errorOut:  stderr,
 		interrupt: interrupts,
 		attach: func(ctx context.Context, tmuxName string) error {
-			command := tmuxAttachCommand(ctx, tmuxName)
+			command := tmuxAttachCommand(ctx, lifecycleConfig.TmuxBinary, tmuxName)
 			command.Stdin = stdin
 			command.Stdout = stdout
 			command.Stderr = stderr
@@ -123,8 +124,8 @@ func runMain(args []string, stdin *os.File, stdout, stderr io.Writer, lookupEnv 
 	return client.run(context.Background(), opts)
 }
 
-func tmuxAttachCommand(ctx context.Context, tmuxName string) *exec.Cmd {
-	return exec.CommandContext(ctx, "tmux", "attach-session", "-E", "-t", tmuxName)
+func tmuxAttachCommand(ctx context.Context, tmuxBinary, tmuxName string) *exec.Cmd {
+	return tmux.ConfigureCommand(exec.CommandContext(ctx, tmuxBinary, "attach-session", "-E", "-t", tmuxName))
 }
 
 func writerIsTerminal(writer io.Writer, terminal func(*os.File) bool) bool {

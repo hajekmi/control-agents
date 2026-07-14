@@ -655,22 +655,28 @@ func TestStopRequiresGoOwnedZombieToBeReaped(t *testing.T) {
 }
 
 func TestBridgeCommandVerificationDistinguishesCurrentAndLegacyCommands(t *testing.T) {
-	managed := registry.Session{ID: "alpha", TmuxName: "alpha", Socket: "/state/sockets/alpha.sock"}
-	valid := append([]string{"/usr/bin/ttyd"}, bridgeArguments(managed, 10000, "tmux")...)
-	if !bridgeCommandMatches(valid, "ttyd", "tmux", managed) {
+	managed := registry.Session{
+		ID:        "alpha",
+		PublicRef: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		TmuxName:  "alpha",
+		Socket:    "/state/sockets/alpha.sock",
+	}
+	const absoluteTmux = "/home/test/.local/bin/tmux"
+	valid := append([]string{"/usr/bin/ttyd"}, bridgeArguments(managed, 10000, absoluteTmux)...)
+	if !bridgeCommandMatches(valid, "ttyd", absoluteTmux, managed) {
 		t.Fatal("valid bridge command did not match")
 	}
-	if legacyBridgeCommandMatches(valid, "ttyd", "tmux", managed) {
+	if legacyBridgeCommandMatches(valid, "ttyd", absoluteTmux, managed) {
 		t.Fatal("current bridge command matched as legacy")
 	}
 	wrongSocket := append([]string(nil), valid...)
 	wrongSocket[3] = managed.Socket + ".other"
-	if bridgeCommandMatches(wrongSocket, "ttyd", "tmux", managed) || legacyBridgeCommandMatches(wrongSocket, "ttyd", "tmux", managed) {
+	if bridgeCommandMatches(wrongSocket, "ttyd", absoluteTmux, managed) || legacyBridgeCommandMatches(wrongSocket, "ttyd", absoluteTmux, managed) {
 		t.Fatal("bridge command with another socket matched")
 	}
 	wrongSession := append([]string(nil), valid...)
 	wrongSession[len(wrongSession)-1] = "alpha-other"
-	if bridgeCommandMatches(wrongSession, "ttyd", "tmux", managed) || legacyBridgeCommandMatches(wrongSession, "ttyd", "tmux", managed) {
+	if bridgeCommandMatches(wrongSession, "ttyd", absoluteTmux, managed) || legacyBridgeCommandMatches(wrongSession, "ttyd", absoluteTmux, managed) {
 		t.Fatal("bridge command with another tmux session matched")
 	}
 	legacy := append([]string(nil), valid...)
@@ -680,15 +686,92 @@ func TestBridgeCommandVerificationDistinguishesCurrentAndLegacyCommands(t *testi
 			break
 		}
 	}
-	if bridgeCommandMatches(legacy, "ttyd", "tmux", managed) {
+	if bridgeCommandMatches(legacy, "ttyd", absoluteTmux, managed) {
 		t.Fatal("bridge command that can update the managed session environment matched")
 	}
-	if !legacyBridgeCommandMatches(legacy, "ttyd", "tmux", managed) {
+	if !legacyBridgeCommandMatches(legacy, "ttyd", absoluteTmux, managed) {
 		t.Fatal("verified legacy bridge command was not recognized for migration")
 	}
 	legacyWithTrailingCommand := append(append([]string(nil), legacy...), "sleep", "60")
-	if bridgeCommandMatches(legacyWithTrailingCommand, "ttyd", "tmux", managed) || legacyBridgeCommandMatches(legacyWithTrailingCommand, "ttyd", "tmux", managed) {
+	if bridgeCommandMatches(legacyWithTrailingCommand, "ttyd", absoluteTmux, managed) || legacyBridgeCommandMatches(legacyWithTrailingCommand, "ttyd", absoluteTmux, managed) {
 		t.Fatal("bridge command with an unrelated trailing command matched")
+	}
+}
+
+func TestPreviousRegisteredBridgeCommandRequiresExactFormerArguments(t *testing.T) {
+	managed := registry.Session{
+		ID:        "alpha",
+		PublicRef: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		TmuxName:  "alpha",
+		Socket:    "/state/sockets/alpha.sock",
+	}
+	valid := append([]string{"/usr/bin/ttyd"}, bridgeArguments(managed, 2345, "tmux")...)
+	if !previousRegisteredBridgeCommandMatches(valid, "ttyd", managed) {
+		t.Fatal("exact previous bridge command was not recognized")
+	}
+	normalized := append([]string(nil), valid...)
+	normalized = append(normalized[:7], append([]string{"scrollback", "2345"}, normalized[8:]...)...)
+	if !previousRegisteredBridgeCommandMatches(normalized, "ttyd", managed) {
+		t.Fatal("exact previous bridge command with ttyd-normalized scrollback was not recognized")
+	}
+	legacy := []string{
+		"/usr/bin/ttyd",
+		"-W",
+		"-i", managed.Socket,
+		"-b", "/terminal/" + managed.ID,
+		"-t", "scrollback=2345",
+		"tmux", "attach-session", "-t", managed.TmuxName,
+	}
+	if !previousRegisteredBridgeCommandMatches(legacy, "ttyd", managed) {
+		t.Fatal("exact historical registered bridge command was not recognized")
+	}
+	legacyNormalized := append([]string(nil), legacy...)
+	legacyNormalized = append(legacyNormalized[:7], append([]string{"scrollback", "2345"}, legacyNormalized[8:]...)...)
+	if !previousRegisteredBridgeCommandMatches(legacyNormalized, "ttyd", managed) {
+		t.Fatal("exact historical bridge command with ttyd-normalized scrollback was not recognized")
+	}
+	managed.PID = 101
+	bridge := &processBridge{ttydBinary: "/usr/bin/ttyd", tmuxBinary: "/home/test/.local/bin/tmux"}
+	if kind := bridge.classifyBridgeCommand(managed, managed.PID, valid); kind != bridgeCommandLegacy {
+		t.Fatalf("registered previous bridge kind = %d, want legacy", kind)
+	}
+	if kind := bridge.classifyBridgeCommand(managed, managed.PID+1, valid); kind != bridgeCommandUnrelated {
+		t.Fatalf("unregistered previous bridge kind = %d, want unrelated", kind)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func([]string) []string
+	}{
+		{name: "absolute tmux", mutate: func(arguments []string) []string {
+			arguments[8] = "/home/test/.local/bin/tmux"
+			return arguments
+		}},
+		{name: "missing environment guard", mutate: func(arguments []string) []string {
+			return append(arguments[:10], arguments[11:]...)
+		}},
+		{name: "legacy public base", mutate: func(arguments []string) []string {
+			arguments[5] = "/terminal/" + managed.ID
+			return arguments
+		}},
+		{name: "noncanonical scrollback", mutate: func(arguments []string) []string {
+			arguments[7] = "scrollback=02345"
+			return arguments
+		}},
+		{name: "extra ttyd option", mutate: func(arguments []string) []string {
+			return append(arguments[:8], append([]string{"-O"}, arguments[8:]...)...)
+		}},
+		{name: "trailing command", mutate: func(arguments []string) []string {
+			return append(arguments, "sleep", "60")
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			arguments := test.mutate(append([]string(nil), valid...))
+			if previousRegisteredBridgeCommandMatches(arguments, "ttyd", managed) {
+				t.Fatalf("non-exact previous bridge command matched: %#v", arguments)
+			}
+		})
 	}
 }
 

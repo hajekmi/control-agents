@@ -25,6 +25,7 @@ import (
 
 	"control-agents/internal/registry"
 	managedsession "control-agents/internal/session"
+	managedtmux "control-agents/internal/tmux"
 )
 
 func TestRealTmuxAndTtydSessionAppears(t *testing.T) {
@@ -50,12 +51,14 @@ func TestRealTmuxAndTtydSessionAppears(t *testing.T) {
 
 	port := freePort(t)
 	app := exec.CommandContext(ctx, "go", "run", "../../cmd/server")
-	app.Env = append(os.Environ(),
-		"CONTROL_AGENTS_PASSWORD=secret",
-		"CONTROL_AGENTS_BIND_ADDR=127.0.0.1",
-		fmt.Sprintf("CONTROL_AGENTS_PORT=%d", port),
-		"CONTROL_AGENTS_STATE_DIR="+stateDir,
-	)
+	app.Env = environmentWith(map[string]string{
+		"LANG":                     "C",
+		"LC_ALL":                   "C",
+		"CONTROL_AGENTS_PASSWORD":  "secret",
+		"CONTROL_AGENTS_BIND_ADDR": "127.0.0.1",
+		"CONTROL_AGENTS_PORT":      strconv.Itoa(port),
+		"CONTROL_AGENTS_STATE_DIR": stateDir,
+	})
 	var appLog bytes.Buffer
 	app.Stdout = &appLog
 	app.Stderr = &appLog
@@ -67,11 +70,13 @@ func TestRealTmuxAndTtydSessionAppears(t *testing.T) {
 	waitForHTTP(t, ctx, client, fmt.Sprintf("https://127.0.0.1:%d/login", port))
 
 	clientCommand := exec.CommandContext(ctx, "../../bin/control-agents", sessionName)
-	clientCommand.Env = append(os.Environ(),
-		"CONTROL_AGENTS_STATE_DIR="+stateDir,
-		"CONTROL_AGENTS_NO_ATTACH=1",
-		"CONTROL_AGENTS_WEB_SCROLLBACK_LINES=2345",
-	)
+	clientCommand.Env = environmentWith(map[string]string{
+		"LANG":                                "C",
+		"LC_ALL":                              "C",
+		"CONTROL_AGENTS_STATE_DIR":            stateDir,
+		"CONTROL_AGENTS_NO_ATTACH":            "1",
+		"CONTROL_AGENTS_WEB_SCROLLBACK_LINES": "2345",
+	})
 	if output, err := clientCommand.CombinedOutput(); err != nil {
 		t.Fatalf("client failed: %v\n%s", err, output)
 	}
@@ -414,7 +419,7 @@ func TestReconcileMigratesLegacyAutomaticSizingToManualWithoutResizing(t *testin
 	}
 }
 
-func TestReconcileMigratesLegacyBridgeToSingleEnvironmentPreservingProcess(t *testing.T) {
+func TestReconcileMigratesRegisteredRelativeTmuxBridgeWithoutOrphan(t *testing.T) {
 	if os.Getenv("RUN_E2E") != "1" {
 		t.Skip("set RUN_E2E=1 to run real tmux/ttyd e2e tests")
 	}
@@ -437,6 +442,17 @@ func TestReconcileMigratesLegacyBridgeToSingleEnvironmentPreservingProcess(t *te
 	t.Cleanup(func() { _ = os.RemoveAll(stateDir) })
 	defer exec.Command("tmux", "kill-session", "-t", sessionName).Run()
 	defer killRegisteredTtyd(stateDir, sessionName)
+	resolvedTmux, err := managedtmux.ResolveBinary(homeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !filepath.IsAbs(resolvedTmux) {
+		t.Fatalf("resolved tmux path = %q, want absolute", resolvedTmux)
+	}
+	publicRef, err := registry.NewPublicRef()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	lifecycle, err := managedsession.New(managedsession.Config{
 		StateDir:             stateDir,
@@ -458,11 +474,11 @@ func TestReconcileMigratesLegacyBridgeToSingleEnvironmentPreservingProcess(t *te
 	legacyPIDPath := filepath.Join(stateDir, "legacy-ttyd.pid")
 	legacyParent := exec.Command(
 		"sh", "-c", `
-"$1" -W -i "$2" -b "$3" -t scrollback=10000 tmux attach-session -t "$4" &
+"$1" -W -i "$2" -b "$3" -t scrollback=10000 tmux attach-session -E -t "$4" &
 printf '%s\n' "$!" > "$5"
 exec sleep 30
 `,
-		"legacy-wrapper", ttydPath, socketPath, "/terminal/"+sessionName, sessionName, legacyPIDPath,
+		"previous-wrapper", ttydPath, socketPath, "/terminal/"+publicRef, sessionName, legacyPIDPath,
 	)
 	var legacyLog bytes.Buffer
 	legacyParent.Stdout = &legacyLog
@@ -489,13 +505,28 @@ exec sleep 30
 	if parentPID, parentErr := processParentPID(legacyPID); parentErr != nil || parentPID != legacyParent.Process.Pid {
 		t.Fatalf("legacy ttyd parent PID/error = %d/%v, want wrapper PID %d", parentPID, parentErr, legacyParent.Process.Pid)
 	}
-	waitForUnixSocket(t, ctx, socketPath)
-
-	store := registry.NewStore(stateDir)
-	publicRef, err := registry.NewPublicRef()
+	previousArguments, err := readProcessArguments(legacyPID)
 	if err != nil {
 		t.Fatal(err)
 	}
+	wantPreviousArguments := []string{
+		ttydPath,
+		"-W",
+		"-i", socketPath,
+		"-b", "/terminal/" + publicRef,
+		"-t", "scrollback=10000",
+		"tmux", "attach-session", "-E", "-t", sessionName,
+	}
+	wantNormalizedArguments := append([]string(nil), wantPreviousArguments...)
+	wantNormalizedArguments = append(wantNormalizedArguments[:7], append([]string{"scrollback", "10000"}, wantNormalizedArguments[8:]...)...)
+	if strings.Join(previousArguments, "\x00") != strings.Join(wantPreviousArguments, "\x00") &&
+		strings.Join(previousArguments, "\x00") != strings.Join(wantNormalizedArguments, "\x00") {
+		t.Fatalf("previous bridge argv = %#v, want exact former argv %#v", previousArguments, wantPreviousArguments)
+	}
+	waitForUnixSocket(t, ctx, socketPath)
+	previousSocketInode := unixSocketInode(t, socketPath)
+
+	store := registry.NewStore(stateDir)
 	if err := store.Write(registry.Session{
 		ID:        sessionName,
 		Name:      sessionName,
@@ -511,21 +542,25 @@ exec sleep 30
 
 	sessions, err := lifecycle.Reconcile(ctx)
 	if err != nil {
-		t.Fatalf("reconcile legacy bridge: %v\nlegacy log:\n%s", err, legacyLog.String())
+		t.Fatalf("reconcile previous bridge: %v\nprevious log:\n%s", err, legacyLog.String())
 	}
 	assertFileMode(t, socketPath, 0o600)
+	replacementSocketInode := unixSocketInode(t, socketPath)
+	if replacementSocketInode == previousSocketInode {
+		t.Fatal("reconciliation retained the previous bridge socket instead of replacing it")
+	}
 	if len(sessions) != 1 || sessions[0].ID != sessionName || sessions[0].PID == legacyPID {
-		t.Fatalf("reconciled sessions = %#v, legacy PID = %d", sessions, legacyPID)
+		t.Fatalf("reconciled sessions = %#v, previous PID = %d", sessions, legacyPID)
 	}
 	waitForProcessState(t, ctx, legacyPID, "Z")
 	if processAlive(legacyPID) {
-		t.Fatalf("verified legacy bridge PID %d remains alive", legacyPID)
+		t.Fatalf("verified previous bridge PID %d remains alive", legacyPID)
 	}
 	bridgePIDs := ttydPIDsForSocket(t, socketPath)
 	if len(bridgePIDs) != 1 || bridgePIDs[0] != sessions[0].PID {
 		t.Fatalf("bridge PIDs for managed socket = %v, want only %d", bridgePIDs, sessions[0].PID)
 	}
-	assertTtydCommandLineContains(t, stateDir, sessionName, "attach-session -E -t "+sessionName)
+	assertTtydAttachSuffix(t, sessions[0].PID, resolvedTmux, sessionName)
 	stablePath, err := managedsession.ForwardedAgentSocketPath(stateDir)
 	if err != nil {
 		t.Fatal(err)
@@ -2198,6 +2233,22 @@ func waitForUnixSocket(t *testing.T, ctx context.Context, path string) {
 	}
 }
 
+func unixSocketInode(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile("/proc/net/unix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 8 && fields[len(fields)-1] == path {
+			return fields[6]
+		}
+	}
+	t.Fatalf("unix socket %s is absent from /proc/net/unix", path)
+	return ""
+}
+
 func ttydPIDsForSocket(t *testing.T, socketPath string) []int {
 	t.Helper()
 	entries, err := os.ReadDir("/proc")
@@ -2244,6 +2295,33 @@ func assertTtydCommandLineContains(t *testing.T, stateDir, sessionName string, w
 			t.Fatalf("ttyd cmdline %q does not contain %q", cmdline, want)
 		}
 	}
+}
+
+func assertTtydAttachSuffix(t *testing.T, pid int, tmuxBinary, sessionName string) {
+	t.Helper()
+	arguments, err := readProcessArguments(pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{tmuxBinary, "attach-session", "-E", "-t", sessionName}
+	if len(arguments) < len(want) {
+		t.Fatalf("ttyd argv has %d arguments, want exact attach suffix", len(arguments))
+	}
+	got := arguments[len(arguments)-len(want):]
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("ttyd attach suffix = %#v, want %#v", got, want)
+	}
+	if !filepath.IsAbs(got[0]) {
+		t.Fatalf("new ttyd bridge selected relative tmux path %q", got[0])
+	}
+}
+
+func readProcessArguments(pid int) ([]string, error) {
+	data, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "cmdline"))
+	if err != nil {
+		return nil, err
+	}
+	return strings.Split(strings.TrimRight(string(data), "\x00"), "\x00"), nil
 }
 
 func readRegisteredTtydPID(stateDir, sessionName string) int {

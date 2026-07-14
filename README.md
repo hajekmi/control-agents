@@ -20,7 +20,10 @@ It is optimized for mobile touch displays, especially iOS Safari and iPadOS brow
 Linux user-local install from the latest GitHub Release:
 
 ```sh
-sudo apt install tmux ttyd
+sudo apt-get update
+sudo apt-get install -y bison build-essential ca-certificates curl libevent-dev libncurses-dev pkg-config ttyd
+curl -fsSL https://raw.githubusercontent.com/hajekmi/control-agents/main/install-tmux.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
 curl -fsSL https://raw.githubusercontent.com/hajekmi/control-agents/main/install.sh | sh
 systemctl --user enable control-agents.service
 systemctl --user restart control-agents.service
@@ -39,7 +42,23 @@ To install a specific release, pass `VERSION` to the shell that runs the install
 curl -fsSL https://raw.githubusercontent.com/hajekmi/control-agents/main/install.sh | VERSION=2026.5.21 sh
 ```
 
-The installer downloads GitHub Release binaries, installs them under `~/.local/bin`, creates `~/.config/control-agents/env` with a generated `CONTROL_AGENTS_PASSWORD` when the file does not already exist, installs the user systemd unit under `~/.config/systemd/user/control-agents.service`, and runs `systemctl --user daemon-reload` when available.
+`install-tmux.sh` downloads the pinned tmux 3.7b source archive, verifies its
+published SHA-256 checksum, builds and verifies it in a temporary prefix, and
+atomically replaces `~/.local/bin/tmux` without `sudo`. The explicit `PATH`
+export makes that executable current for the rest of the shell; add the same
+line to the shell profile when `~/.local/bin` is not already present. The
+Control Agents installer also prepends its selected user-local `bin` directory
+for its own verification, requires exact tmux 3.7b in that directory before
+writing Control Agents files, and warns when the caller's shell needs the PATH
+update. The installed user service always searches the user-local directory
+first. Set the same absolute `BIN_DIR` for both installers to use a custom
+destination; `PREFIX` is not a tmux-installer destination setting.
+
+The Control Agents installer downloads GitHub Release binaries, installs them
+under `~/.local/bin`, creates `~/.config/control-agents/env` with a generated
+`CONTROL_AGENTS_PASSWORD` when the file does not already exist, installs the
+user systemd unit under `~/.config/systemd/user/control-agents.service`, and
+runs `systemctl --user daemon-reload` when available.
 
 Review the generated config before exposing the service:
 
@@ -76,7 +95,10 @@ Runtime:
 - Linux `amd64` or `arm64`. Release installs select architecture-matched Go
   client and server binaries and verify both against the published checksum
   manifest.
-- `tmux` for shared terminal sessions.
+- Exactly `tmux` 3.7b for shared terminal sessions. Newer releases are not
+  accepted until they are added to the tested runtime contract. In particular, the
+  Ubuntu 24.04 package is tmux 3.4 and is too old for managed-pane history
+  reconciliation and the opaque topology format used by Control Agents.
 - `ttyd` for browser terminal I/O.
 - A Linux kernel with pidfd support (5.3 or newer); lifecycle process cleanup
   fails closed rather than signaling through a reusable numeric PID.
@@ -84,8 +106,11 @@ Runtime:
 - One Unix account for the SSH client, user service, tmux sessions, `ttyd`
   bridges, and private lifecycle state.
 
-The release installer additionally requires `sha256sum` before it writes either
-downloaded binary.
+The tmux source installer requires `bison`, a C compiler and build toolchain,
+`libevent` and ncurses development headers, `make`, `pkg-config`, `tar`, and
+`sha256sum`. On Ubuntu 24.04 the Quick Install command above provides them.
+The Control Agents release installer additionally requires `sha256sum` before
+it writes either downloaded binary.
 
 Development:
 
@@ -122,6 +147,12 @@ Use this path when developing locally or installing without release binaries. In
 - `tmux`
 - `ttyd`
 - systemd user services
+
+Control Agents currently requires exactly tmux 3.7b. The supported release
+path pins and verifies that version because Ubuntu 24.04 packages incompatible
+tmux 3.4 and untested newer releases are outside the runtime contract. For a
+user-local source prerequisite, run `./install-tmux.sh`, export
+`PATH="$HOME/.local/bin:$PATH"`, and verify that `tmux -V` prints `tmux 3.7b`.
 
 Clone the repository, build, and install the server and client binaries, user systemd unit, and first-run environment file:
 
@@ -167,6 +198,9 @@ make build
 ```
 
 The default Makefile uses local Go cache directories under `.cache/` and disables cgo. This keeps tests working in restricted environments and produces simple Linux server and client binaries.
+Repository build and test targets force `LANG=C.UTF-8` and `LC_ALL=C.UTF-8`.
+`make test-e2e` also supplies `TERM=xterm-256color` to its real PTY fixtures,
+so noninteractive callers with `TERM=dumb` exercise the same attach scenarios.
 
 Stage the same release assets used by CI, including both commands for Linux
 `amd64` and `arm64` plus their checksum manifest:
@@ -368,6 +402,13 @@ records written by the earlier Bash client are migrated in place; unsafe or
 invalid records are ignored and never cause an unmanaged tmux session to be
 adopted or terminated.
 
+During the exact tmux 3.7b path upgrade, reconciliation recognizes the
+immediately previous bridge only when its exact former relative `tmux
+attach-session -E -t <managed-session>` command belongs to the PID already
+stored in that valid managed record. It terminates that bridge and replaces its
+socket before starting a bridge with the resolved absolute tmux path. Other
+relative ttyd/tmux processes are neither adopted nor terminated.
+
 ## Configuration
 
 The Go service reads:
@@ -395,6 +436,18 @@ reads:
 - `CONTROL_AGENTS_TMUX_WINDOW_SIZE`, default `manual`
 - `CONTROL_AGENTS_TMUX_MOUSE`, default `off`
 - `CONTROL_AGENTS_WEB_SCROLLBACK_LINES`, default `10000`
+
+Control Agents resolves and verifies exact tmux 3.7b beside the installed
+server/client binary, then in the default user-local directory, before using
+ambient `PATH` only as a development fallback. It executes managed tmux
+commands and ttyd bridge processes with
+`LANG=C.UTF-8` and `LC_ALL=C.UTF-8`, independent of the invoking SSH shell or
+server environment. The installed user service applies its managed `PATH` and
+locale at `ExecStart`, after loading the preserved operator environment file,
+so `PATH=/usr/bin:/bin`, `LANG=C`, or `LC_ALL=C` entries cannot replace these
+runtime invariants. This is part of the tmux topology contract: tmux 3.7b under
+the plain `C` locale can rewrite the format delimiters used to resolve opaque
+window and pane identity.
 
 The server and client must use the same `CONTROL_AGENTS_STATE_DIR`; its default
 is `$HOME/.local/state/control-agents` for both. The Go client additionally

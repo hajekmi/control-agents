@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"control-agents/internal/registry"
+	"control-agents/internal/tmux"
 )
 
 type processBridge struct {
@@ -112,6 +113,7 @@ func (b *processBridge) start(ctx context.Context, managed registry.Session) (in
 	// The bridge intentionally outlives the request that reconciled it. Use a
 	// non-canceling context while still executing ttyd directly without a shell.
 	command := exec.CommandContext(context.Background(), b.ttydBinary, arguments...)
+	tmux.ConfigureCommand(command)
 	command.Stdin = nil
 	command.Stdout = logFile
 	command.Stderr = logFile
@@ -291,7 +293,7 @@ func (b *processBridge) openVerifiedHandle(managed registry.Session, pid int) (*
 		return nil, false, nil
 	}
 	arguments, err := processCommandLine(pid)
-	if err != nil || classifyBridgeCommand(arguments, filepath.Base(b.ttydBinary), b.tmuxBinary, managed) == bridgeCommandUnrelated {
+	if err != nil || b.classifyBridgeCommand(managed, pid, arguments) == bridgeCommandUnrelated {
 		_ = handle.Close()
 		return nil, false, nil
 	}
@@ -357,7 +359,22 @@ func (b *processBridge) pidKindForExecutable(managed registry.Session, pid int, 
 	if err != nil {
 		return bridgeCommandUnrelated
 	}
-	return classifyBridgeCommand(arguments, filepath.Base(b.ttydBinary), b.tmuxBinary, managed)
+	return b.classifyBridgeCommand(managed, pid, arguments)
+}
+
+func (b *processBridge) classifyBridgeCommand(managed registry.Session, pid int, arguments []string) bridgeCommandKind {
+	kind := classifyBridgeCommand(arguments, filepath.Base(b.ttydBinary), b.tmuxBinary, managed)
+	if kind != bridgeCommandUnrelated {
+		return kind
+	}
+	// The immediately previous release launched the registered bridge with a
+	// relative "tmux" executable. Accept only that exact former argv and only
+	// for the PID already stored in this managed session's registry record. It
+	// is migration cleanup, never process discovery or adoption.
+	if pid == managed.PID && previousRegisteredBridgeCommandMatches(arguments, filepath.Base(b.ttydBinary), managed) {
+		return bridgeCommandLegacy
+	}
+	return bridgeCommandUnrelated
 }
 
 func expectedExecutable(binary string) (os.FileInfo, error) {
@@ -392,6 +409,47 @@ func bridgeCommandMatches(arguments []string, ttydBase, tmuxBinary string, manag
 
 func legacyBridgeCommandMatches(arguments []string, ttydBase, tmuxBinary string, managed registry.Session) bool {
 	return classifyBridgeCommand(arguments, ttydBase, tmuxBinary, managed) == bridgeCommandLegacy
+}
+
+func previousRegisteredBridgeCommandMatches(arguments []string, ttydBase string, managed registry.Session) bool {
+	if len(arguments) < 8 || filepath.Base(arguments[0]) != ttydBase || !registry.ValidPublicRef(managed.PublicRef) {
+		return false
+	}
+	var scrollbackText string
+	normalized := false
+	switch {
+	case strings.HasPrefix(arguments[7], "scrollback="):
+		scrollbackText = strings.TrimPrefix(arguments[7], "scrollback=")
+	case arguments[7] == "scrollback" && len(arguments) > 8:
+		// ttyd's option parser may replace the '=' in its own argv with a NUL,
+		// so Linux exposes the previously single option as two proc arguments.
+		scrollbackText = arguments[8]
+		normalized = true
+	default:
+		return false
+	}
+	scrollback, err := strconv.Atoi(scrollbackText)
+	if err != nil || scrollback < 0 || strconv.Itoa(scrollback) != scrollbackText {
+		return false
+	}
+	current := bridgeArguments(managed, scrollback, "tmux")
+	legacy := []string{
+		"-W",
+		"-i", managed.Socket,
+		"-b", "/terminal/" + managed.ID,
+		"-t", "scrollback=" + scrollbackText,
+		"tmux", "attach-session", "-t", managed.TmuxName,
+	}
+	for _, candidate := range [][]string{current, legacy} {
+		if normalized {
+			candidate = append(candidate[:6], append([]string{"scrollback", scrollbackText}, candidate[7:]...)...)
+		}
+		expected := append([]string{arguments[0]}, candidate...)
+		if strings.Join(arguments, "\x00") == strings.Join(expected, "\x00") {
+			return true
+		}
+	}
+	return false
 }
 
 func classifyBridgeCommand(arguments []string, ttydBase, tmuxBinary string, managed registry.Session) bridgeCommandKind {
