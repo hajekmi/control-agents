@@ -320,6 +320,15 @@ evidence schema instead.
   sudo path uses the existing loaded vendor `chrome` AppArmor profile without
   changing policy; its genuine enforced behavior, the three-engine matrix, and
   benchmarks still require a new hosted run.
+- Implementation commit `8cd6d1e` and empty retrigger commit `5fdc318` are on
+  remote `main`. GitHub records both push events, the workflow file is
+  byte-identical to local, `active` through the workflow API, YAML-valid, and
+  passes `actionlint`, but neither push creates a check suite or workflow run;
+  the public repository Actions page returns 404. The operator confirmed that
+  Actions are intentionally disabled for this repository. The earlier explicit
+  deployment authorization permits an operator-override deploy without
+  representing this hosted gate as green; keep the task in progress until
+  equivalent enforced Ubuntu evidence is supplied or Actions are re-enabled.
 - Keep this task `in-progress` and do not start task 0014 until an authorized CI
   run is green (or the operator authorizes equivalent system dependency
   installation). No installed service was deployed or restarted.
