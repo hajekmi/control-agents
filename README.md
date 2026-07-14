@@ -886,6 +886,16 @@ owns the tmux server, `ttyd` bridges, registry and lock files, and forwarded
 agent link. A root or system service, another SSH account, or a unit with a
 different state directory cannot transparently manage those sessions.
 
+Managed shells deliberately have the same Unix privilege boundary as an
+ordinary interactive SSH shell for that account. The supplied user unit sets
+`NoNewPrivileges=false`, so interactive `sudo` can follow the account's normal
+sudoers, password, and policy rules; Control Agents does not grant sudo access
+when the account lacks it. Anyone with web terminal access can exercise the
+same account-authorized privilege, so use a dedicated least-privileged account
+and restrict its sudoers policy accordingly. `UMask=0077`, `PrivateTmp=false`,
+`ProtectSystem=full`, the address-family allowlist, and `LimitCORE=0` remain in
+force.
+
 Enable and start:
 
 ```sh
@@ -898,6 +908,28 @@ After later updates, rebuild, reinstall, and restart the service:
 ```sh
 make install restart
 ```
+
+`NoNewPrivileges` is inherited when the tmux server starts and cannot be
+relaxed for that already-running process. After changing this unit from an
+older `NoNewPrivileges=true` installation, a controlled maintenance step must
+restart the user service and replace the old tmux server before recreating its
+managed session names. Terminal contents in the old server cannot be migrated.
+Never kill a shared tmux server until you have verified that it contains no
+unmanaged sessions, because Control Agents must not terminate or adopt them.
+
+Verify the installed boundary after the replacement:
+
+```sh
+systemctl --user show control-agents.service -p NoNewPrivileges
+tmux_pid="$(tmux display-message -p '#{pid}')"
+awk '$1 == "NoNewPrivs:" { print $2 }' "/proc/$tmux_pid/status"
+```
+
+The service property must be `NoNewPrivileges=no`, and the tmux process status
+must be `NoNewPrivs: 0`. From a recreated managed shell, `sudo -n true` may
+succeed or may report the account's normal password/policy requirement. It
+must not report that the kernel's no-new-privileges flag prevents elevation;
+interactive `sudo` remains subject to the configured account policy.
 
 Check logs:
 

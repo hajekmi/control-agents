@@ -4,6 +4,11 @@ Versions use calendar numbering: `YYYY.M.REVISION`.
 
 ## Unreleased
 
+- Restore ordinary same-account shell privilege semantics for managed
+  terminals by setting the user service to `NoNewPrivileges=false`, allowing
+  interactive sudo to follow the account's existing password and sudoers
+  policy while retaining the remaining unit hardening. Document the required
+  service and inherited tmux-server replacement for existing installations.
 - Pin CI to the checksum-verified tmux 3.7b upstream release instead of
   Ubuntu 24.04's incompatible tmux 3.4 package through the same user-local
   installer used by Quick Install, with selected executable/version checks

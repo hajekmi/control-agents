@@ -44,7 +44,7 @@ func TestInstallerSelectsMatchingClientAndServerAssets(t *testing.T) {
 				t.Fatalf("generated service is not private or does not use the matching installed server:\n%s", data)
 			}
 			for _, directive := range []string{
-				"NoNewPrivileges=true", "PrivateTmp=false", "ProtectSystem=full",
+				"NoNewPrivileges=false", "PrivateTmp=false", "ProtectSystem=full",
 				"RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6", "LimitCORE=0",
 				"EnvironmentFile=" + filepath.Join(result.configHome, "control-agents", "env"),
 				"ExecStart=/usr/bin/env PATH=" + filepath.Join(result.prefix, "bin") + ":",
@@ -53,6 +53,9 @@ func TestInstallerSelectsMatchingClientAndServerAssets(t *testing.T) {
 				if !strings.Contains(string(data), directive) {
 					t.Fatalf("generated service lacks %s:\n%s", directive, data)
 				}
+			}
+			if strings.Contains(string(data), "NoNewPrivileges=true") {
+				t.Fatalf("generated service prevents normal account-authorized privilege elevation:\n%s", data)
 			}
 		})
 	}

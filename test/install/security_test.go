@@ -77,3 +77,53 @@ func TestServerSourceDoesNotEnablePprofOrHeapDumpEndpoints(t *testing.T) {
 		}
 	}
 }
+
+func TestTerminalPrivilegeBoundaryIsExplicitAndDocumented(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hardening := []string{
+		"UMask=0077",
+		"NoNewPrivileges=false",
+		"PrivateTmp=false",
+		"ProtectSystem=full",
+		"RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
+		"LimitCORE=0",
+	}
+	for _, path := range []string{
+		filepath.Join(root, "systemd", "user", "control-agents.service"),
+		filepath.Join(root, "install.sh"),
+	} {
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(contents)
+		for _, directive := range hardening {
+			if !strings.Contains(text, directive) {
+				t.Errorf("%s lacks required service directive %q", path, directive)
+			}
+		}
+		if strings.Contains(text, "NoNewPrivileges=true") {
+			t.Errorf("%s prevents account-authorized sudo in managed shells", path)
+		}
+	}
+
+	for _, path := range []string{
+		filepath.Join(root, "README.md"),
+		filepath.Join(root, "SECURITY.md"),
+	} {
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(contents)
+		for _, required := range []string{"NoNewPrivileges=false", "interactive `sudo`", "NoNewPrivs: 0"} {
+			if !strings.Contains(text, required) {
+				t.Errorf("%s does not document %q", path, required)
+			}
+		}
+	}
+}

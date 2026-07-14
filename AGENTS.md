@@ -113,6 +113,11 @@ documentation. Keep this file focused on working rules for future agents.
   prefer tmux to own all mouse handling.
 - Preserve the managed tmux status line shape: `status-left` session label,
   `status-right` current pane path, no hostname/date/time.
+- Managed terminal sessions must retain the same account privilege boundary as
+  an ordinary SSH shell, including interactive `sudo` when account policy
+  authorizes it. Keep the user unit at `NoNewPrivileges=false`; restrict sudo
+  through the Unix account policy rather than irreversibly constraining the
+  shared tmux server.
 - Preserve `LANG=C.UTF-8` and `LC_ALL=C.UTF-8` for the server, Go SSH client,
   ttyd bridge, managed tmux commands, installed user service, and repository
   tests. Tmux 3.7b under the plain C locale corrupts topology delimiters.

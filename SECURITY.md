@@ -107,6 +107,15 @@ Do not include live passwords, cookies, private keys, terminal output containing
   Chromium trees are ignored. One real sudo attempt from the standalone
   ready-state probe proves that privilege cannot be regained.
 - Anyone who authenticates to the web UI can effectively operate the exposed shell sessions as the service user.
+- Managed shells intentionally match that Unix account's ordinary SSH
+  privilege boundary. The user unit sets `NoNewPrivileges=false`, so
+  interactive `sudo` remains available when the account's sudoers and
+  authentication policy authorize it; Control Agents neither grants nor
+  removes that authorization. After deployment, the unit must report
+  `NoNewPrivileges=no`, a newly created tmux server must report
+  `NoNewPrivs: 0`, and a non-interactive sudo probe may fail only through the
+  account's normal password/policy path, not because no-new-privileges blocks
+  elevation.
 - The SSH client, tmux server, `ttyd` bridges, lifecycle state, and
   `systemd --user` service share one Unix security boundary. Control Agents
   does not isolate sessions from other processes owned by that account.
@@ -145,10 +154,15 @@ Do not include live passwords, cookies, private keys, terminal output containing
   swap. This is an operator threat-model decision; Control Agents never writes
   History snapshots or Paste staging data to an application dump file.
 - The supplied user unit disables core dumps and enables compatible filesystem,
-  privilege, and address-family restrictions. `PrivateTmp=true` is intentionally
-  not used because SSH clients and the user service must share the same tmux
-  socket namespace under `/tmp`.
+  and address-family restrictions. It deliberately uses
+  `NoNewPrivileges=false` for ordinary account-authorized interactive `sudo`;
+  `PrivateTmp=true` is intentionally not used because SSH clients and the user
+  service must share the same tmux socket namespace under `/tmp`. The private
+  umask, read-only system protection, address-family allowlist, and zero core
+  limit remain enabled.
 - Avoid running highly privileged shells or root sessions through the web UI.
+  Prefer an account with no sudo authorization; otherwise restrict sudoers to
+  the minimum commands and authentication policy required by the operator.
 - Use a separately managed, narrowly scoped deploy key, workload identity, or
   token when unattended jobs must authenticate while the forwarding computer
   is offline.
@@ -176,6 +190,8 @@ The following are expected when the service is configured this way:
 
 - An authenticated user can read terminal output and send terminal input.
 - A user with the configured password can paste text into the active shell.
+- If the service account is authorized for sudo, an authenticated terminal user
+  can invoke interactive `sudo` under the same policy as an SSH shell.
 - A browser may warn about the default self-signed certificate until it is trusted locally or replaced.
 - A forwarded agent becomes unavailable after SSH logout or transport loss
   until another valid forwarded connection invokes `control-agents`.

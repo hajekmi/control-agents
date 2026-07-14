@@ -36,6 +36,15 @@ Prokázat korektnost, Safari UX, izolaci SSH klienta a rozumné limity na slabš
   redraw, wrap, rollover, pane-generation, and SSH-isolation semantics use
   deterministic fixtures and may never be skipped.
 - No installed service restart or deployment is part of this task.
+- Operator-approved correction on 2026-07-14: managed terminal sessions are
+  expected to behave like the same account's ordinary SSH shell, including
+  interactive `sudo` when that Unix account is authorized. The user service
+  must therefore explicitly use `NoNewPrivileges=false`; retaining the other
+  unit hardening remains required. This correction explicitly supersedes the
+  no-deploy rule only for the unit update, service restart, and replacement of
+  the currently running tmux server whose inherited `NoNewPrivs: 1` flag is
+  irreversible. Preserve managed session names where practical, but terminal
+  contents in that old tmux server are not migratable and may be discarded.
 
 ## Úkoly
 
@@ -169,6 +178,19 @@ Prokázat korektnost, Safari UX, izolaci SSH klienta a rozumné limity na slabš
 - [x] Reconnect-to-redraw (explicitly unsupported under ttyd).
 - [x] Slow-consumer behavior (explicitly unsupported until task 0016).
 
+### CA-0711 — Interactive sudo in managed sessions
+- Priorita: P0
+
+- [x] Set the committed and generated user unit to
+      `NoNewPrivileges=false` without weakening the remaining hardening.
+- [x] Update install/security regressions and operator documentation to state
+      the deliberate terminal privilege boundary.
+- [x] Prove a tmux server created through the deployed service has
+      `NoNewPrivs: 0` and that `sudo` reaches its normal account policy instead
+      of being rejected by the kernel no-new-privileges flag.
+- [x] Restart the user service, replace the inherited old tmux server, and
+      recreate its managed session names without retaining terminal output.
+
 ## Doporučené acceptance gates
 
 - History overlay reaguje vizuálně do jednoho frame.
@@ -199,6 +221,11 @@ Prokázat korektnost, Safari UX, izolaci SSH klienta a rozumné limity na slabš
   most 1 px, selection does not mutate the History DOM, and current ttyd
   transport loss returns through reconnect without changing the immutable
   snapshot.
+- The installed service explicitly reports `NoNewPrivileges=no`; a newly
+  service-created tmux server reports `NoNewPrivs: 0`; `sudo -n true` may
+  succeed or report the account's normal password/policy requirement, but must
+  not report that no-new-privileges prevents elevation. Other committed unit
+  hardening remains unchanged.
 
 ## Reference
 
@@ -288,6 +315,17 @@ evidence schema instead.
   host and clean-Ubuntu E2E, repeated sandboxed Chromium boundary and full
   browser targets, including hostile `TERM=dumb`, plus unit, race, vet,
   benchmark, JavaScript, formatting, diff, and cleanup validation.
+- CA-0711 deliberately restores ordinary same-account SSH privilege semantics
+  for managed terminals. The committed and generated user units now set
+  `NoNewPrivileges=false`; installer/security regressions pin that decision and
+  the remaining hardening, while README, SECURITY, AGENTS, and CHANGELOG record
+  the sudo threat boundary and inherited tmux replacement procedure.
+- The authorized unit-only deployment replaced the old tmux server after
+  proving there were no unmanaged sessions, recreated the single registry-backed
+  session, and preserved its managed name. Main-agent and independent-review
+  checks both observed `NoNewPrivileges=no`, `NoNewPrivs: 0` on the service,
+  tmux, ttyd, and pane processes, normal sudo password policy rather than a
+  no-new-privileges rejection, an active service, and HTTPS login status 200.
 
 ## Current blocker
 
@@ -331,7 +369,9 @@ evidence schema instead.
   equivalent enforced Ubuntu evidence is supplied or Actions are re-enabled.
 - Keep this task `in-progress` and do not start task 0014 until an authorized CI
   run is green (or the operator authorizes equivalent system dependency
-  installation). No installed service was deployed or restarted.
+  installation). The original History implementation was not redeployed;
+  only the operator-approved CA-0711 unit correction was installed and its
+  required service/tmux replacement completed.
 
 ## Independent review findings
 
