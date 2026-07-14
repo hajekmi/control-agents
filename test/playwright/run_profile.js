@@ -4,69 +4,74 @@ const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
 const { spawn, spawnSync } = require("node:child_process");
+const { ChromiumSandboxError, assertChromiumSandboxedProcess } = require("./chromium_sandbox.js");
+const {
+  BoundaryError,
+  assertNoPrivilegeRegain,
+  assertPrivateNetworkBoundary,
+  capturePromiseOutcome,
+  launchPrivateNetworkBoundary,
+  markerVariable: networkBoundaryMarker,
+  networkChurnArgument,
+  recordBoundaryFailure,
+  requestBoundaryChurn,
+  restoreBoundaryEnvironment,
+  selectedLauncherMode,
+  signalBoundaryReady
+} = require("./network_boundary.js");
 
 const repoRoot = path.resolve(__dirname, "../..");
-const networkBoundaryMarker = "CONTROL_AGENTS_PLAYWRIGHT_PRIVATE_NETWORK";
-const hostNetworkNamespaceVariable = "CONTROL_AGENTS_PLAYWRIGHT_HOST_NETWORK_NAMESPACE";
+const networkModeVariable = "CONTROL_AGENTS_PLAYWRIGHT_NETWORK_MODE";
+const networkProbeArgument = "--network-boundary-probe";
 
-if (process.platform === "linux" && process.env[networkBoundaryMarker] !== "1") {
-  enterPrivateNetworkNamespace();
-} else if (process.argv.slice(2).includes("--network-boundary-probe")) {
-  validateNetworkBoundary().catch(() => {
-    console.error("[site:network-boundary-probe] Playwright network boundary probe failed");
-    process.exitCode = 1;
-  });
-} else {
-  try {
-    runPlaywrightProfile();
-  } catch (_error) {
-    console.error("[site:network-boundary-verify] Playwright network boundary validation failed");
-    process.exitCode = 1;
-  }
-}
+main().catch((error) => {
+  const site = error instanceof BoundaryError ? error.site : "[site:network-boundary-launcher]";
+  console.error(site);
+  process.exitCode = 1;
+});
 
-function enterPrivateNetworkNamespace() {
-  const hostNetworkNamespace = readNetworkNamespace();
-  const isolated = spawn("unshare", [
-    "--kill-child=SIGTERM",
-    "--user",
-    "--map-root-user",
-    "--net",
-    "sh",
-    "-c",
-    'ip link set lo up && exec "$@"',
-    "control-agents-playwright-network",
-    process.execPath,
-    __filename,
-    ...process.argv.slice(2)
-  ], {
-    cwd: repoRoot,
-    env: {
-      ...process.env,
-      [networkBoundaryMarker]: "1",
-      [hostNetworkNamespaceVariable]: hostNetworkNamespace
-    },
-    stdio: "inherit"
-  });
-
-  let forwardedSignal = "";
-  for (const signal of ["SIGINT", "SIGTERM"]) {
-    process.on(signal, () => {
-      forwardedSignal = signal;
-      signalProcess(isolated.pid, signal);
+async function main() {
+  const args = process.argv.slice(2);
+  if (process.platform === "linux" && process.env[networkBoundaryMarker] !== "1") {
+    process.exitCode = await launchPrivateNetworkBoundary({
+      args,
+      operation: "profile",
+      repoRoot,
+      requestedMode: process.env[networkModeVariable],
+      runProfilePath: __filename
     });
+    return;
   }
-  isolated.once("error", () => {
-    console.error("[site:network-boundary-enter] private Playwright network boundary could not start");
-    process.exitCode = 1;
-  });
-  isolated.once("exit", (code, signal) => {
-    process.exitCode = Number.isInteger(code) ? code : (signal || forwardedSignal ? 1 : 0);
-  });
+
+  if (process.platform === "linux") {
+    try {
+      restoreBoundaryEnvironment();
+      assertPrivateNetworkBoundary();
+      await signalBoundaryReady();
+    } catch (error) {
+      recordBoundaryFailure(error);
+      process.exitCode = 1;
+      return;
+    }
+  }
+
+  if (args.includes(networkChurnArgument)) return;
+  if (args.includes(networkProbeArgument)) {
+    try {
+      await validateNetworkBoundary();
+    } catch (error) {
+      console.error(error instanceof ChromiumSandboxError
+        ? error.site
+        : "[site:network-boundary-probe] Playwright network boundary probe failed");
+      process.exitCode = 1;
+    }
+    return;
+  }
+
+  process.exitCode = await runPlaywrightProfile();
 }
 
 function runPlaywrightProfile() {
-  assertPrivateNetworkBoundary();
   const fixtureID = `pw${process.pid}-${Date.now().toString(36)}`;
   const stateDir = path.join(repoRoot, ".cache", `pwr${process.pid}`);
   const managedSessions = [
@@ -96,36 +101,38 @@ function runPlaywrightProfile() {
     });
   }
 
-  let finishing = false;
-  const finishProfile = async (exitCode) => {
-    if (finishing) return;
-    finishing = true;
+  return new Promise((resolve) => {
+    let finishing = false;
+    const finishProfile = async (exitCode) => {
+      if (finishing) return;
+      finishing = true;
 
-    let boundaryClean = await waitForProcessGroupExit(profile.pid, 2_000);
-    if (!boundaryClean) {
-      signalProcessGroup(profile.pid, "SIGTERM");
-      boundaryClean = await waitForProcessGroupExit(profile.pid, 3_000);
-    }
-    if (!boundaryClean) {
-      signalProcessGroup(profile.pid, "SIGKILL");
-      boundaryClean = await waitForProcessGroupExit(profile.pid, 2_000);
-    }
+      let boundaryClean = await waitForProcessGroupExit(profile.pid, 2_000);
+      if (!boundaryClean) {
+        signalProcessGroup(profile.pid, "SIGTERM");
+        boundaryClean = await waitForProcessGroupExit(profile.pid, 3_000);
+      }
+      if (!boundaryClean) {
+        signalProcessGroup(profile.pid, "SIGKILL");
+        boundaryClean = await waitForProcessGroupExit(profile.pid, 2_000);
+      }
 
-    const fixtureClean = cleanupFixture(stateDir, managedSessions);
-    if ((!boundaryClean || !fixtureClean) && exitCode === 0) {
-      console.error("[site:profile-process-boundary] browser fixture did not stop cleanly");
-      process.exitCode = 1;
-      return;
-    }
-    process.exitCode = exitCode;
-  };
+      const fixtureClean = cleanupFixture(stateDir, managedSessions);
+      if ((!boundaryClean || !fixtureClean) && exitCode === 0) {
+        console.error("[site:profile-process-boundary] browser fixture did not stop cleanly");
+        resolve(1);
+        return;
+      }
+      resolve(exitCode);
+    };
 
-  profile.on("error", async () => {
-    await finishProfile(1);
-  });
-  profile.on("exit", async (code, signal) => {
-    const exitCode = Number.isInteger(code) ? code : (signal || forwardedSignal ? 1 : 0);
-    await finishProfile(exitCode);
+    profile.on("error", async () => {
+      await finishProfile(1);
+    });
+    profile.on("exit", async (code, signal) => {
+      const exitCode = Number.isInteger(code) ? code : (signal || forwardedSignal ? 1 : 0);
+      await finishProfile(exitCode);
+    });
   });
 }
 
@@ -173,6 +180,7 @@ async function validateNetworkBoundary() {
     return;
   }
   assertPrivateNetworkBoundary();
+  assertNoPrivilegeRegain(selectedLauncherMode());
   let mutationCount = 0;
   let pendingMutationResponse = null;
   let markMutationReceived;
@@ -192,33 +200,28 @@ async function validateNetworkBoundary() {
   });
 
   let browser;
+  let mutation = null;
+  let mutationSettlement = null;
   try {
     const port = await listenOnLoopback(server);
     const { chromium } = require("@playwright/test");
-    browser = await chromium.launch();
+    browser = await chromium.launch({ chromiumSandbox: true });
     const page = await browser.newPage();
     await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "domcontentloaded" });
-    const mutation = page.evaluate(async () => {
+    await assertChromiumSandboxedProcess();
+    mutationSettlement = new AbortController();
+    mutation = capturePromiseOutcome(page.evaluate(async () => {
       const response = await fetch("/mutation", { method: "POST", body: "" });
       return response.status;
-    });
+    }), mutationSettlement.signal);
     await boundedPromise(mutationReceived, 5_000);
 
-    const churn = spawnSync("unshare", [
-      "--user",
-      "--map-root-user",
-      "--net",
-      "sh",
-      "-c",
-      "ip link set lo up && ip link add boundary0 type dummy && ip link set boundary0 up && ip link del boundary0"
-    ], { stdio: "ignore", timeout: 5_000 });
-    if (churn.status !== 0 || churn.error) {
-      throw new Error("nested network notification probe failed");
-    }
+    await requestBoundaryChurn();
 
     pendingMutationResponse.writeHead(204, { "Cache-Control": "no-store" });
     pendingMutationResponse.end();
-    if (await boundedPromise(mutation, 5_000) !== 204 || mutationCount !== 1) {
+    const mutationOutcome = await boundedPromise(mutation, 5_000);
+    if (!mutationOutcome.fulfilled || mutationOutcome.value !== 204 || mutationCount !== 1) {
       throw new Error("loopback mutation was not completed exactly once");
     }
     await browser.close();
@@ -227,33 +230,10 @@ async function validateNetworkBoundary() {
     console.log("Playwright private network boundary validated with one exactly-once mutation.");
   } finally {
     if (pendingMutationResponse && !pendingMutationResponse.writableEnded) pendingMutationResponse.destroy();
-    if (browser) await browser.close().catch(() => {});
-    if (server.listening) await closeServer(server).catch(() => {});
-  }
-}
-
-function assertPrivateNetworkBoundary() {
-  if (process.platform !== "linux") return;
-  const hostNetworkNamespace = process.env[hostNetworkNamespaceVariable] || "";
-  const currentNetworkNamespace = readNetworkNamespace();
-  if (!hostNetworkNamespace || hostNetworkNamespace === currentNetworkNamespace) {
-    throw new Error("[site:network-boundary-identity] Playwright did not enter a private network namespace");
-  }
-  const linkState = spawnSync("ip", ["-j", "link", "show"], { encoding: "utf8", timeout: 5_000 });
-  if (linkState.status !== 0 || linkState.error) {
-    throw new Error("[site:network-boundary-inspection] Playwright network boundary could not be inspected");
-  }
-  const interfaces = JSON.parse(linkState.stdout);
-  if (interfaces.length !== 1 || interfaces[0].ifname !== "lo" || !interfaces[0].flags.includes("UP")) {
-    throw new Error("[site:network-boundary-interfaces] Playwright network boundary is not loopback-only");
-  }
-}
-
-function readNetworkNamespace() {
-  try {
-    return fs.readlinkSync("/proc/self/ns/net");
-  } catch (_error) {
-    return "";
+    if (mutationSettlement) mutationSettlement.abort();
+    if (mutation) await mutation;
+    if (browser) await boundedPromise(browser.close(), 5_000).catch(() => {});
+    if (server.listening) await boundedPromise(closeServer(server), 5_000).catch(() => {});
   }
 }
 
@@ -280,17 +260,6 @@ function boundedPromise(promise, timeoutMs) {
       throw new Error("bounded network boundary operation timed out");
     })
   ]);
-}
-
-function signalProcess(pid, signal) {
-  if (!Number.isInteger(pid) || pid <= 0) return;
-  try {
-    process.kill(pid, signal);
-  } catch (error) {
-    if (!error || error.code !== "ESRCH") {
-      // The child exit event determines the final result.
-    }
-  }
 }
 
 function signalProcessGroup(pid, signal) {

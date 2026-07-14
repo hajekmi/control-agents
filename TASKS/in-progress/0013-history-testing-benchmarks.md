@@ -280,13 +280,14 @@ evidence schema instead.
   `util-linux`, and `iproute2`. Task 0018 contains the complete still-pending
   physical Safari/iPhone/iPad evidence schema and matrix; automated WebKit is
   never described as Safari coverage.
-- All 36 independent-review and hosted-CI findings are corrected in the local
+- All 47 independent-review and hosted-CI findings are corrected in the local
   implementation. The latest correction centralizes compact real-process E2E
   state paths and proves every fixture socket remains within the unchanged
   100-byte production limit at the GitHub checkout path and maximum Linux PID.
   Fresh reviews reported no remaining implementation findings after repeated
-  host and clean-Ubuntu E2E, including hostile `TERM=dumb`, plus unit, race,
-  vet, JavaScript, formatting, diff, and cleanup validation.
+  host and clean-Ubuntu E2E, repeated sandboxed Chromium boundary and full
+  browser targets, including hostile `TERM=dumb`, plus unit, race, vet,
+  benchmark, JavaScript, formatting, diff, and cleanup validation.
 
 ## Current blocker
 
@@ -307,6 +308,18 @@ evidence schema instead.
   production limit, and pass repeated full E2E on the host and clean Ubuntu
   24.04 at the hosted checkout path. The correction still requires a new green
   hosted AMD64 workflow run through E2E, browser matrix, and benchmarks.
+- Hosted workflow run `29323514312`, job `87054211713`, proves the corrected
+  E2E step green on AMD64, then fails `make test-browser-matrix` immediately
+  before any browser profile completes; benchmarks are skipped. The required
+  hosted browser/benchmark evidence therefore remains blocked by finding 37.
+- Findings 37–47 replace the Linux boundary launcher with fail-closed
+  unprivileged/sudo modes, an outer exactly-once churn coordinator, complete
+  identity/route/capability/readiness verification, a minimal stdin-restored
+  environment, and explicitly sandboxed Chromium process-tree proof. Repeated
+  rootless host probes and all 14 Chromium scenarios pass. The Ubuntu 24.04
+  sudo path uses the existing loaded vendor `chrome` AppArmor profile without
+  changing policy; its genuine enforced behavior, the three-engine matrix, and
+  benchmarks still require a new hosted run.
 - Keep this task `in-progress` and do not start task 0014 until an authorized CI
   run is green (or the operator authorizes equivalent system dependency
   installation). No installed service was deployed or restarted.
@@ -537,3 +550,98 @@ evidence schema instead.
     shorten affected fixture prefixes, and prove all real-process fixtures fit
     at the hosted checkout path and maximum supported PID before repeating host
     and clean-Ubuntu E2E. Do not raise the production socket-path limit.
+37. Resolve the immediate hosted Ubuntu 24.04 failure at the start of
+    `make test-browser-matrix` in workflow run `29323514312`, job
+    `87054211713`, after unit, syntax, exact-tmux install, and E2E all pass.
+    The zero-second browser step is consistent with the fail-closed private
+    network-boundary bootstrap being rejected before Playwright starts; Ubuntu
+    24.04 restricts unprivileged user namespaces through AppArmor by default.
+    Reproduce and classify the exact boundary site without terminal content,
+    then provide a repository-owned, explicitly verified loopback-only boundary
+    on both ordinary developer hosts and GitHub-hosted Ubuntu runners. Keep the
+    boundary fail closed, do not disable isolation silently, do not retry
+    mutations, and do not require the full browser test process to run as root.
+    Prove the boundary probe, full Chromium target, and hosted three-engine
+    matrix before declaring the finding complete.
+
+    The approved boundary design is explicit launcher modes `auto`,
+    `unprivileged`, and `sudo`, with CI pinned to Ubuntu 24.04 and selecting
+    `sudo`. The ordinary path must use current-user mapping, retain capability
+    only long enough to configure loopback, then drop capabilities before Node.
+    The Ubuntu path may run only a fixed, argument-safe bootstrap through
+    non-interactive `sudo -n`: create the network namespace, set `lo` up, and
+    immediately use `setpriv` to restore the original nonzero UID/GID/groups and
+    clear inheritable, ambient, and effective capabilities before executing
+    Node. Browser/test arguments must never be evaluated by a privileged shell.
+    Verify a distinct namespace, exactly one UP loopback interface, no
+    non-loopback/default route, original non-root UID, and zero effective and
+    ambient capabilities before Playwright. A readiness handshake may allow
+    `auto` to fall back once only when the rootless bootstrap exits before the
+    isolated child is ready; after readiness, never relaunch or repeat an
+    action. Make the nested link-churn probe use the selected bootstrap. Emit
+    only fixed content-free failure sites and add launcher regressions for
+    rootless success, pre-ready AppArmor denial, unavailable sudo, and no
+    post-ready fallback. Do not change the Ubuntu AppArmor sysctl, install a
+    broad exception, disable browser sandboxing, or run the suite as root.
+38. Move the nested churn launch out of the ready browser child. The verified
+    child correctly has `no_new_privs`, so it cannot invoke the selected sudo
+    launcher again; clean Ubuntu reproduces a fail-closed
+    `network-boundary-sudo-unavailable` before any browser target. Coordinate a
+    single content-free churn request/result through the original non-root
+    launcher that still owns the profile child. The outer launcher may run the
+    same fixed bootstrap in the selected mode and must report one bounded result
+    back; the browser child must never regain privilege or invoke sudo.
+39. Treat operator cancellation before readiness as terminal. SIGINT/SIGTERM or
+    a signaled launcher child must never be fallback-eligible in `auto` mode and
+    must not start the sudo path or profile after cancellation. Add a regression
+    for this exact pre-ready sequence.
+40. Verify both IPv4 and IPv6 routing in the isolated child. Reject any default
+    route in either family and any route using a non-loopback interface; keep
+    exactly one UP loopback interface as the independent topology invariant.
+41. Settle the held browser mutation on every boundary-probe exit. If churn
+    fails and the browser closes, no rejected `page.evaluate` promise or stack
+    may escape after the fixed content-free site; preserve exactly one request
+    and no retry.
+42. Put all per-attempt allocation and environment encoding under cleanup
+    ownership. Oversized/invalid environment handoff, command construction,
+    spawn failure, readiness timeout, cancellation, and normal exit must remove
+    private boundary files/directories and terminate owned children without
+    leaking paths or environment content.
+43. Enable and prove Chromium's Linux sandbox in both the Playwright suite and
+    the standalone boundary probe. Playwright defaults `chromiumSandbox` to
+    false and current launch diagnostics include `--no-sandbox`, which violates
+    finding 37's explicit invariant. Set sandboxing explicitly, add a regression
+    rejecting `--no-sandbox`, and make the Ubuntu 24.04 sudo boundary pass with
+    sandboxed Chromium without weakening AppArmor or running the browser as
+    root.
+44. Launch the privileged/bootstrap boundary with a minimal fixed environment.
+    The full caller environment is already encoded into the bounded stdin
+    handoff but is also currently passed to `spawn`, so a single legal large
+    value can hit Linux `execve` per-string limits before readiness. Pass only
+    the fixed locale/PATH and launcher inputs needed by sudo/unshare, restore
+    caller values solely after privilege drop from stdin, and prove a large
+    literal value survives without appearing in argv, files, or diagnostics.
+45. Verify `NoNewPrivs: 1` independently in the ready child. Parse it from
+    `/proc/self/status` alongside every zero capability set, reject missing or
+    zero state with the fixed credentials/capability site, and add a negative
+    regression showing a ready child cannot regain privilege through sudo.
+46. Make the Chromium sandbox proof universal over the owned process tree.
+    The current snapshot selects the first matching browser and accepts one
+    valid renderer, so a stale sandboxed process can mask another browser or
+    renderer using `--no-sandbox` or missing identity, capability,
+    `NoNewPrivs`, seccomp, or namespace isolation. Require every matching owned
+    browser and every renderer descendant to satisfy all invariants, reject any
+    mixed valid/invalid snapshot, and keep the process-tree ownership check so
+    unrelated host Chromium processes are ignored.
+47. Complete Chromium process identity and capability validation. Read GID and
+    supplementary groups for every owned browser/renderer and reject root IDs
+    or group 0. Each browser process must retain the exact original UID, GID,
+    and supplementary groups and all five capability sets, including bounding,
+    must be zero. Each renderer must have non-root mapped UID/GID, no group 0,
+    zero inheritable/permitted/effective/ambient sets, `NoNewPrivs: 1`, seccomp
+    mode 2, and distinct user/PID/network namespaces. A renderer's capability
+    bounding mask may be namespace-local and nonzero only when that distinct
+    user-namespace plus zero-held-capability/NNP invariant is proven; do not
+    misreport it as a held host capability. Add root-GID/group-0, browser
+    bounding-mask, renderer held-capability, and unsafe renderer bounding-mask
+    regressions while preserving real sandboxed Chromium behavior.

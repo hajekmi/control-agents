@@ -74,6 +74,7 @@ test-e2e: build
 	TERM=$(E2E_TERM) RUN_E2E=1 go test -count=1 ./test/e2e
 
 test-browser-network-boundary: prepare-playwright
+	node --test test/playwright/network_boundary_test.js
 	$(PLAYWRIGHT_PROFILE_RUNNER) --network-boundary-probe
 
 test-browser: build test-browser-network-boundary

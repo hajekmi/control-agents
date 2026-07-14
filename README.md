@@ -118,8 +118,10 @@ Development:
   toolchain compatible with the module.
 - `make` for the provided workflow.
 - Node.js 20, 22, or 24 plus npm for Playwright browser E2E tests.
-- Linux `unshare` and `ip` (normally provided by `util-linux` and `iproute2`)
-  for the private loopback-only Playwright network boundary.
+- Linux `unshare`, `setpriv`, and `ip` (normally provided by `util-linux` and
+  `iproute2`) for the private loopback-only Playwright network boundary.
+- Ubuntu's `aa-exec` and loaded vendor `chrome` AppArmor profile (provided by
+  `apparmor-utils` and `apparmor`) when the boundary uses `sudo`.
 
 Playwright is a project-local dev dependency. Install JavaScript dependencies from the repo root:
 
@@ -255,7 +257,27 @@ loopback-only network namespace so unrelated host link, route, or dynamic IPv6
 notifications cannot abort an exactly-once local History or lifecycle mutation
 with Chromium's `ERR_NETWORK_CHANGED`. The deterministic boundary gate also
 proves one local mutation completes exactly once while a separate nested
-namespace emits link notifications. Within a shared functional invocation,
+namespace emits link notifications. The original non-root launcher, not the
+capability-free browser child, owns that one selected-mode churn attempt and
+returns only a fixed request/result signal. Before Playwright starts, the
+launcher verifies a distinct namespace, one UP loopback interface, no IPv4 or
+IPv6 default route, no route through a non-loopback interface, the original
+non-root identity, `NoNewPrivs: 1`, and zero process capabilities. Chromium is
+launched with its Linux sandbox explicitly enabled. The suite and standalone
+boundary probe inspect every matching Chromium browser owned by the runner and
+every renderer below each browser. They reject `--no-sandbox`, root or changed
+browser UID, GID, or supplementary groups, group 0, any nonzero browser
+capability set including the bounding set, and missing `NoNewPrivs`. Every
+renderer must have non-root mapped UID/GID values, no group 0, zero
+inheritable, permitted, effective, and ambient capabilities, `NoNewPrivs: 1`,
+seccomp mode 2, and distinct user, PID, and network namespaces. A renderer's
+nonzero capability bounding mask is accepted only with that distinct user
+namespace plus zero-held-capability and no-new-privileges proof; it is a
+namespace-local ceiling, not a capability held against the host. Unrelated
+host Chromium process trees are outside the ownership check.
+The fixed bootstrap retains network capability only long enough to bring up
+loopback and then uses `setpriv` to drop it before Node or a browser starts.
+Within a shared functional invocation,
 each scenario also uses a test-scoped browser process instead of carrying one
 browser network service across independent contexts. WebKit
 is engine coverage; it is not evidence that desktop Safari, iOS Safari, or
@@ -273,6 +295,37 @@ wheel/touch routing. The History fixture rolls a real managed pane through more
 than 50,000 shell-log lines, traverses immutable pages while another tmux client
 is attached, and traces that no copy-mode, viewport-scroll, input, or resize
 mutation is emitted by local scrolling.
+
+`CONTROL_AGENTS_PLAYWRIGHT_NETWORK_MODE` selects the fail-closed Linux launcher:
+
+- `auto` (default) tries the current-user namespace mapping first. It may try
+  the fixed `sudo -n` bootstrap once only when the rootless child exits before
+  the verified readiness handshake; cancellation, a signaled child, and every
+  failure after readiness are terminal and never relaunch a browser action.
+- `unprivileged` requires the current-user mapping and never invokes `sudo`.
+- `sudo` invokes only the repository bootstrap through non-interactive sudo.
+  The bootstrap creates the network namespace, brings up loopback, restores the
+  caller's nonzero UID, GID, and supplementary groups, clears inheritable,
+  ambient, effective, and bounding capabilities, sets `no_new_privs`, and then
+  directly executes Node without evaluating browser arguments in a privileged
+  shell. On Ubuntu it enters the already loaded vendor `chrome` AppArmor
+  profile before the privilege drop so Chromium retains only the profile's
+  explicit user-namespace permission needed by its own sandbox.
+
+Ubuntu 24.04 commonly rejects the rootless user-namespace path through its
+default AppArmor policy. Use `sudo -v` before a local explicit `sudo` run (the
+launcher itself always uses `sudo -n`). Both `auto` and `sudo` fail closed when
+non-interactive sudo is unavailable. CI is pinned to Ubuntu 24.04 and selects
+`sudo`. The tests do not change the AppArmor sysctl, weaken the browser sandbox,
+install or broaden an AppArmor profile, or run the server, tmux, ttyd, Node, or
+browser as root. The bootstrap process starts with only fixed `PATH`, `LANG`,
+and `LC_ALL` values; the bounded caller environment is restored after the
+privilege drop solely from stdin. The standalone boundary probe verifies that
+a real `sudo -n` attempt from the ready child cannot regain privilege; normal
+browser profiles never invoke sudo after readiness.
+Each launcher attempt owns its private handshake directory and child process
+from allocation through normal exit, failure, timeout, or cancellation; both
+are removed before a fallback or target completion is reported.
 
 Browser failure diagnostics use a content-free reporter that emits only fixed
 test titles, projects, and status. Automatic page-text failure context, trace,

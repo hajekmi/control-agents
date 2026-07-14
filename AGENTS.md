@@ -165,6 +165,10 @@ documentation. Keep this file focused on working rules for future agents.
 - Run `make test-browser-matrix` for History/browser compatibility changes so
   Chromium, Firefox, and WebKit engine automation stays green. Never describe
   WebKit automation as physical or Safari evidence.
+- Keep Linux browser targets inside the verified loopback-only network
+  boundary. Launcher modes are `auto`, `unprivileged`, and `sudo`; only the
+  fixed bootstrap may run through `sudo -n`, and Node, browsers, the server,
+  tmux, and ttyd must run as the original non-root user without capabilities.
 - Run `make test-benchmarks` after changing History capture, ANSI parsing,
   snapshot paging/materialization, local scrolling, or reconnect behavior.
   Generated reports must remain bounded and content-free.

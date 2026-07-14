@@ -33,9 +33,27 @@ Versions use calendar numbering: `YYYY.M.REVISION`.
   proves browser/server/ttyd/tmux teardown before the next profile, use a fresh
   browser process for each independent scenario, isolate complete Linux
   profiles from ambient host network-change notifications in a private
-  loopback-only namespace with an exactly-once boundary gate, and keep failure
-  diagnostics content-free with disabled rich artifacts plus an
-  intentional-failure canary scanner.
+  loopback-only namespace with an exactly-once boundary gate, add explicit
+  fail-closed rootless and narrow sudo launcher modes with a pre-ready-only
+  fallback and verified non-root/capability-free execution, keep selected-mode
+  link churn in the original launcher, reject fallback after cancellation,
+  verify loopback-only IPv4 and IPv6 routes, settle the exactly-once mutation
+  on failure, clean every attempt-owned child and file, and keep failure
+  diagnostics content-free with disabled rich artifacts plus an intentional-
+  failure canary scanner. Pin CI to Ubuntu 24.04 and select the sudo boundary
+  mode so AppArmor's unprivileged-user-namespace restriction cannot silently
+  disable isolation. Explicitly enable Chromium's Linux sandbox, reject
+  `--no-sandbox`, and verify every runner-owned matching browser plus every
+  renderer descendant for UID/GID/group identity, capability state, and
+  `NoNewPrivs`. Require exact browser identity with all five capability masks
+  clear; require non-root mapped renderer identity, zero held capabilities,
+  seccomp, and user/PID/network namespace isolation while treating a proven
+  namespace-local renderer bounding mask as a ceiling rather than a held host
+  capability. Unrelated host processes remain ignored. Enter Ubuntu's existing
+  vendor Chrome AppArmor profile before the non-root, capability-free,
+  `no_new_privs` drop, pass only a fixed minimal environment to the bootstrap,
+  restore bounded caller values solely from stdin, and prove the ready child
+  cannot regain privilege through sudo.
 - Harden browser terminal access with login-bound CSRF tokens, exact WebSocket
   origin checks, self-only application CSP, an external ttyd transport observer,
   and terminal framing restrictions.

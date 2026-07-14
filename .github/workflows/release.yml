@@ -13,7 +13,9 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    env:
+      CONTROL_AGENTS_PLAYWRIGHT_NETWORK_MODE: sudo
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
@@ -30,7 +32,8 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y bison build-essential iproute2 libevent-dev libncurses-dev pkg-config ttyd util-linux
+          sudo apt-get install -y apparmor-utils bison build-essential iproute2 libevent-dev libncurses-dev pkg-config ttyd util-linux
+          sudo grep -Eq '^chrome \((unconfined|enforce)\)$' /sys/kernel/security/apparmor/profiles
           sh ./install-tmux.sh
           printf '%s\n' "${HOME}/.local/bin" >> "${GITHUB_PATH}"
           export PATH="${HOME}/.local/bin:${PATH}"

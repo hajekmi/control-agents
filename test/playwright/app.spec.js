@@ -4,6 +4,7 @@ const https = require("https");
 const net = require("net");
 const path = require("path");
 const { spawn, spawnSync } = require("child_process");
+const { assertChromiumSandboxedProcess } = require("./chromium_sandbox");
 const { historyViewportProfiles } = require("./history_profiles");
 
 const test = baseTest.extend({
@@ -31,6 +32,13 @@ const test = baseTest.extend({
         5_000
       );
       page = await runBoundedBrowserPhase("browser-fixture-page", () => context.newPage(), 5_000);
+      if (browserName === "chromium") {
+        await runBoundedBrowserPhase(
+          "browser-fixture-sandbox",
+          () => assertChromiumSandboxedProcess(),
+          6_000
+        );
+      }
       await use(page);
     } finally {
       if (context) {

@@ -77,6 +77,35 @@ Do not include live passwords, cookies, private keys, terminal output containing
   intentional-failure canary that scans diagnostics and a deliberately
   retained sanitized error context for terminal text, Paste content, auth
   cookies, and credentials.
+- Linux Playwright profiles fail closed inside a verified loopback-only network
+  namespace. The default launcher uses a current-user mapping and may fall back
+  once before readiness to a fixed non-interactive sudo bootstrap for hosts
+  such as Ubuntu 24.04 that deny unprivileged user namespaces. That bootstrap
+  uses Ubuntu's already loaded vendor `chrome` AppArmor profile solely for its
+  explicit user-namespace permission, then restores the original non-root UID,
+  GID, and groups, clears all process capabilities, and requires
+  `NoNewPrivs: 1` before Node, the server, tmux, ttyd, or a browser starts;
+  browser arguments are passed as literal argv and are never evaluated by the
+  privileged shell. The original non-root launcher owns the one selected-mode
+  link-churn probe, so functional `no_new_privs` browser profiles never invoke
+  sudo.
+  IPv4 and IPv6 routes must remain loopback-only, cancellation never triggers
+  fallback, and per-attempt files and children are cleaned on every exit path.
+  The privileged spawn receives only fixed locale and path values; caller
+  environment values cross the boundary solely through a bounded stdin handoff
+  after privilege drop. Chromium's sandbox is explicitly enabled and verified
+  over every matching browser owned by the runner and every renderer below
+  each browser. Every browser must retain the runner's exact non-root UID, GID,
+  and supplementary groups, exclude group 0, have all five capability masks
+  (including bounding) clear, and retain `NoNewPrivs`. Every renderer must have
+  non-root mapped UID/GID values, exclude group 0, have clear inheritable,
+  permitted, effective, and ambient masks, retain `NoNewPrivs`, run under
+  seccomp mode 2, and use separate user, PID, and network namespaces. A nonzero
+  renderer bounding mask is accepted only under that distinct user namespace
+  with zero held capabilities and no-new-privileges; the mask is a
+  namespace-local ceiling rather than a held host capability. Unrelated host
+  Chromium trees are ignored. One real sudo attempt from the standalone
+  ready-state probe proves that privilege cannot be regained.
 - Anyone who authenticates to the web UI can effectively operate the exposed shell sessions as the service user.
 - The SSH client, tmux server, `ttyd` bridges, lifecycle state, and
   `systemd --user` service share one Unix security boundary. Control Agents
