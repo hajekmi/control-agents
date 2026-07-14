@@ -43,7 +43,7 @@ func TestRealTmuxAndTtydSessionAppears(t *testing.T) {
 		t.Fatal(err)
 	}
 	sessionName := fmt.Sprintf("e2e-%d", os.Getpid())
-	stateDir := filepath.Join(root, ".cache", "e2e-"+sessionName)
+	stateDir := compactRealProcessStateDir(t, root, "rs", sessionName)
 	_ = os.RemoveAll(stateDir)
 	t.Cleanup(func() { _ = os.RemoveAll(stateDir) })
 	defer exec.Command("tmux", "kill-session", "-t", sessionName).Run()
@@ -142,7 +142,7 @@ func TestLifecycleCreatesAndTerminatesRealManagedSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	sessionName := fmt.Sprintf("lifecycle-e2e-%d", os.Getpid())
-	stateDir := filepath.Join(root, ".cache", sessionName)
+	stateDir := compactRealProcessStateDir(t, root, "lc", sessionName)
 	_ = os.RemoveAll(stateDir)
 	t.Cleanup(func() { _ = os.RemoveAll(stateDir) })
 	homeDir := filepath.Join(t.TempDir(), "home")
@@ -198,7 +198,7 @@ func TestManagedCreationScopesHistoryAndMakesEveryWindowManual(t *testing.T) {
 	}
 	managedName := fmt.Sprintf("policy-managed-%d", os.Getpid())
 	unmanagedName := fmt.Sprintf("policy-unmanaged-%d", os.Getpid())
-	stateDir := filepath.Join(root, ".cache", fmt.Sprintf("policy-%d", os.Getpid()))
+	stateDir := compactRealProcessStateDir(t, root, "pm", managedName)
 	homeDir := t.TempDir()
 	_ = os.RemoveAll(stateDir)
 	t.Cleanup(func() { _ = os.RemoveAll(stateDir) })
@@ -285,7 +285,7 @@ func TestReconcileHistoryLimitKeepsExistingPaneAllocationAndCoversNewPanes(t *te
 		t.Fatal(err)
 	}
 	sessionName := fmt.Sprintf("history-existing-%d", os.Getpid())
-	stateDir := filepath.Join(root, ".cache", fmt.Sprintf("history-%d", os.Getpid()))
+	stateDir := compactRealProcessStateDir(t, root, "h", sessionName)
 	homeDir := t.TempDir()
 	_ = os.RemoveAll(stateDir)
 	t.Cleanup(func() { _ = os.RemoveAll(stateDir) })
@@ -362,7 +362,7 @@ func TestReconcileMigratesLegacyAutomaticSizingToManualWithoutResizing(t *testin
 		t.Fatal(err)
 	}
 	sessionName := fmt.Sprintf("sizing-existing-%d", os.Getpid())
-	stateDir := filepath.Join(root, ".cache", fmt.Sprintf("sizing-%d", os.Getpid()))
+	stateDir := compactRealProcessStateDir(t, root, "sz", sessionName)
 	homeDir := t.TempDir()
 	_ = os.RemoveAll(stateDir)
 	t.Cleanup(func() { _ = os.RemoveAll(stateDir) })
@@ -433,7 +433,7 @@ func TestReconcileMigratesRegisteredRelativeTmuxBridgeWithoutOrphan(t *testing.T
 		t.Fatal(err)
 	}
 	sessionName := fmt.Sprintf("bridge-migrate-%d", os.Getpid())
-	stateDir := filepath.Join(root, ".cache", fmt.Sprintf("bm-%d", os.Getpid()))
+	stateDir := compactRealProcessStateDir(t, root, "bm", sessionName)
 	homeDir := filepath.Join(t.TempDir(), "home")
 	if err := os.Mkdir(homeDir, 0o700); err != nil {
 		t.Fatal(err)
@@ -601,7 +601,7 @@ func TestServerRestartMigratesRegistryRecoversBridgeAndLeavesUnmanagedTmuxUntouc
 	}
 	managedName := fmt.Sprintf("restart-e2e-%d", os.Getpid())
 	unmanagedName := fmt.Sprintf("unmanaged-restart-e2e-%d", os.Getpid())
-	stateDir := filepath.Join(root, ".cache", fmt.Sprintf("restart-%d", os.Getpid()))
+	stateDir := compactRealProcessStateDir(t, root, "rr", managedName)
 	homeDir := filepath.Join(t.TempDir(), "home")
 	if err := os.Mkdir(homeDir, 0o700); err != nil {
 		t.Fatal(err)
@@ -811,7 +811,7 @@ func TestWebLifecycleAPICreatesSelectsLimitsAndTerminatesRealSession(t *testing.
 	}
 	sessionName := fmt.Sprintf("web-api-e2e-%d", os.Getpid())
 	limitedName := fmt.Sprintf("web-limit-e2e-%d", os.Getpid())
-	stateDir := filepath.Join(root, ".cache", "e2e-"+sessionName)
+	stateDir := compactRealProcessStateDir(t, root, "wa", sessionName, limitedName)
 	homeDir := filepath.Join(t.TempDir(), "home")
 	if err := os.Mkdir(homeDir, 0o700); err != nil {
 		t.Fatal(err)
@@ -1243,15 +1243,68 @@ func TestClientDirectNoAttachCreatesInHomeAndRecoversBridge(t *testing.T) {
 
 func compactRealProcessFixturePaths(t *testing.T, root, prefix string) (string, string) {
 	t.Helper()
-	suffix := strconv.FormatInt(int64(os.Getpid()), 36)
-	sessionName := prefix + "-" + suffix
-	stateDir := filepath.Join(root, ".cache", sessionName)
+	sessionName, stateDir := compactRealProcessFixturePathsForPID(root, prefix, os.Getpid())
+	assertRealProcessFixtureSocketPath(t, stateDir, sessionName)
+	return sessionName, stateDir
+}
+
+func compactRealProcessStateDir(t *testing.T, root, prefix string, sessionNames ...string) string {
+	t.Helper()
+	stateDir := compactRealProcessStateDirForPID(root, prefix, os.Getpid())
+	for _, sessionName := range sessionNames {
+		assertRealProcessFixtureSocketPath(t, stateDir, sessionName)
+	}
+	return stateDir
+}
+
+func compactRealProcessFixturePathsForPID(root, prefix string, pid int) (string, string) {
+	suffix := strconv.FormatInt(int64(pid), 36)
+	return prefix + "-" + suffix, compactRealProcessStateDirForPID(root, prefix, pid)
+}
+
+func compactRealProcessStateDirForPID(root, prefix string, pid int) string {
+	suffix := strconv.FormatInt(int64(pid), 36)
+	return filepath.Join(root, ".cache", prefix+"-"+suffix)
+}
+
+func assertRealProcessFixtureSocketPath(t *testing.T, stateDir, sessionName string) {
+	t.Helper()
 	socketPath := filepath.Join(stateDir, "sockets", sessionName+".sock")
 	const bridgeSocketPathLimit = 100
 	if len(socketPath) > bridgeSocketPathLimit {
 		t.Fatalf("real-process fixture socket path is %d bytes, want at most %d: %s", len(socketPath), bridgeSocketPathLimit, socketPath)
 	}
-	return sessionName, stateDir
+}
+
+func TestRealProcessFixtureStatePathsFitHostedCheckoutAtMaximumPID(t *testing.T) {
+	const hostedCheckout = "/home/runner/work/control-agents/control-agents"
+	const maximumLinuxPID = 4_194_304
+	fixturePID := strconv.Itoa(maximumLinuxPID)
+	fixtures := []struct {
+		prefix       string
+		sessionNames []string
+	}{
+		{prefix: "rs", sessionNames: []string{"e2e-" + fixturePID}},
+		{prefix: "lc", sessionNames: []string{"lifecycle-e2e-" + fixturePID}},
+		{prefix: "pm", sessionNames: []string{"policy-managed-" + fixturePID}},
+		{prefix: "h", sessionNames: []string{"history-existing-" + fixturePID}},
+		{prefix: "sz", sessionNames: []string{"sizing-existing-" + fixturePID}},
+		{prefix: "bm", sessionNames: []string{"bridge-migrate-" + fixturePID}},
+		{prefix: "rr", sessionNames: []string{"restart-e2e-" + fixturePID}},
+		{prefix: "wa", sessionNames: []string{"web-api-e2e-" + fixturePID, "web-limit-e2e-" + fixturePID}},
+		{prefix: "ag", sessionNames: []string{"agent-e2e-" + fixturePID}},
+		{prefix: "sl", sessionNames: []string{"selector-e2e-" + fixturePID + "-a", "selector-e2e-" + fixturePID + "-b"}},
+	}
+	for _, fixture := range fixtures {
+		stateDir := compactRealProcessStateDirForPID(hostedCheckout, fixture.prefix, maximumLinuxPID)
+		for _, sessionName := range fixture.sessionNames {
+			assertRealProcessFixtureSocketPath(t, stateDir, sessionName)
+		}
+	}
+	for _, prefix := range []string{"dc", "hf"} {
+		sessionName, stateDir := compactRealProcessFixturePathsForPID(hostedCheckout, prefix, maximumLinuxPID)
+		assertRealProcessFixtureSocketPath(t, stateDir, sessionName)
+	}
 }
 
 func TestForwardedAgentStableLinkInheritsAndRetargetsAcrossReconnect(t *testing.T) {
@@ -1269,7 +1322,7 @@ func TestForwardedAgentStableLinkInheritsAndRetargetsAcrossReconnect(t *testing.
 		t.Fatal(err)
 	}
 	sessionName := fmt.Sprintf("agent-e2e-%d", os.Getpid())
-	stateDir := filepath.Join(root, ".cache", fmt.Sprintf("a-%d", os.Getpid()))
+	stateDir := compactRealProcessStateDir(t, root, "ag", sessionName)
 	homeDir := filepath.Join(t.TempDir(), "home")
 	if err := os.MkdirAll(homeDir, 0o700); err != nil {
 		t.Fatal(err)
@@ -1721,7 +1774,7 @@ func TestClientSelectorCreatesAttachesDetachesAndReturnsToPrompt(t *testing.T) {
 	}
 	firstSessionName := fmt.Sprintf("selector-e2e-%d-a", os.Getpid())
 	secondSessionName := fmt.Sprintf("selector-e2e-%d-b", os.Getpid())
-	stateDir := filepath.Join(root, ".cache", fmt.Sprintf("selector-e2e-%d", os.Getpid()))
+	stateDir := compactRealProcessStateDir(t, root, "sl", firstSessionName, secondSessionName)
 	_ = os.RemoveAll(stateDir)
 	t.Cleanup(func() { _ = os.RemoveAll(stateDir) })
 	for _, sessionName := range []string{firstSessionName, secondSessionName} {

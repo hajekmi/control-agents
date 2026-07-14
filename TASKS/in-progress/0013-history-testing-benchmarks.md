@@ -280,10 +280,13 @@ evidence schema instead.
   `util-linux`, and `iproute2`. Task 0018 contains the complete still-pending
   physical Safari/iPhone/iPad evidence schema and matrix; automated WebKit is
   never described as Safari coverage.
-- All 25 independent-review findings were corrected. The final fresh reviewer
-  reported no implementation findings after two complete Chromium targets,
-  E2E with every optional fullscreen application, two benchmark runs, unit,
-  build, race, vet, JavaScript, and diff validation.
+- All 36 independent-review and hosted-CI findings are corrected in the local
+  implementation. The latest correction centralizes compact real-process E2E
+  state paths and proves every fixture socket remains within the unchanged
+  100-byte production limit at the GitHub checkout path and maximum Linux PID.
+  Fresh reviews reported no remaining implementation findings after repeated
+  host and clean-Ubuntu E2E, including hostile `TERM=dumb`, plus unit, race,
+  vet, JavaScript, formatting, diff, and cleanup validation.
 
 ## Current blocker
 
@@ -291,12 +294,19 @@ evidence schema instead.
   `make test-e2e`, `make test-browser`, two `make test-benchmarks` runs,
   `CGO_ENABLED=1 go test -race -count=1 ./...`, `go vet ./...`, JavaScript
   syntax checks, report validation, and `git diff --check`.
-- `make test-browser-matrix` passes Chromium 9/9, then fails all Firefox and
-  WebKit cases at the fixed `browser-fixture-launch` site because this AlmaLinux
-  host lacks their native runtime libraries. The workflow installs those
-  dependencies with Playwright `--with-deps`, but the uncommitted workspace has
-  not run in CI. Therefore the explicit acceptance criterion “Chromium,
-  Firefox, and WebKit engine CI coverage is green” is not yet evidenced.
+- The tmux/runtime/install corrections are committed and pushed as `a222aef`.
+  Hosted workflow run `29320756618`, job `87045247854`, passed installation of
+  exact tmux 3.7b, unit tests, and syntax checks, then failed the required
+  `make test-e2e` step after about 28 seconds. Browser-matrix and benchmark
+  steps were consequently skipped. Public unauthenticated GitHub metadata
+  exposes only exit code 2, not the failing test output. Therefore the explicit
+  acceptance criterion “Chromium, Firefox, and WebKit engine CI coverage is
+  green” is still not evidenced.
+- Findings 35–36 reproduce that failure as checkout-length-dependent fixture
+  socket paths, correct all real-process fixture paths without changing the
+  production limit, and pass repeated full E2E on the host and clean Ubuntu
+  24.04 at the hosted checkout path. The correction still requires a new green
+  hosted AMD64 workflow run through E2E, browser matrix, and benchmarks.
 - Keep this task `in-progress` and do not start task 0014 until an authorized CI
   run is green (or the operator authorizes equivalent system dependency
   installation). No installed service was deployed or restarted.
@@ -508,3 +518,22 @@ evidence schema instead.
     ttyd` as a successful supported path. Point both occurrences to the shared
     checksum-verified exact-3.7b installer/dependency flow and keep all install
     documents consistent.
+35. Resolve the second hosted Ubuntu E2E failure from workflow run
+    `29320756618`, job `87045247854`, on commit `a222aef`. The exact tmux 3.7b
+    install, unit tests, and syntax checks passed, but `make test-e2e` exited 2
+    after about 28 seconds and public metadata does not expose the test log.
+    Add fixed, content-free per-test/phase diagnostics to the repository target
+    if needed, reproduce the runner-only timing or platform condition, and fix
+    the root cause without weakening assertions or extending every timeout
+    indiscriminately. Prove repeated full E2E on the host and a clean
+    Ubuntu 24.04 environment, then obtain a new green hosted run before deploy.
+36. Correct the hosted-checkout maximum-PID regression added for finding 35.
+    The helper currently derives its state-directory suffix from the real test
+    PID while the regression substitutes Linux `pid_max` only into session
+    names, so it misses the true worst-case base-36 suffix. At the GitHub
+    checkout path, `history-existing-4194304` with state suffix `2hwcg` yields a
+    101-byte socket path and still exceeds the unchanged 100-byte production
+    limit. Make the pure path calculation accept a controlled PID/suffix,
+    shorten affected fixture prefixes, and prove all real-process fixtures fit
+    at the hosted checkout path and maximum supported PID before repeating host
+    and clean-Ubuntu E2E. Do not raise the production socket-path limit.
